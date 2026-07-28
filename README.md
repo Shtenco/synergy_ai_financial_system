@@ -49,6 +49,14 @@ The connected multi-token arbitrage/QE model and results are documented in
 [`docs/GRAPH_ARBITRAGE_QE_RESULTS.md`](docs/GRAPH_ARBITRAGE_QE_RESULTS.md). It
 models USDT-settled routes, flash fees, AMM fees, and SYNA/SYNR transfer burns.
 
+Run the counterfactual graph with SYNA/SYNR transfer burn disabled using
+`python scripts/run_no_burn_graph_experiment.py`.
+
+The bonded commit/reveal, vesting, fixed burn-sink, and sealed-route MEV model is
+documented in [`docs/ANTI_MEV_DESIGN.md`](docs/ANTI_MEV_DESIGN.md).
+The current deployment blockers and completed hardening work are tracked in
+[`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md).
+
 The two-chain bridge/QE solvency model is documented in
 [`docs/DUAL_CIRCUIT_SOLVENCY_REVIEW.md`](docs/DUAL_CIRCUIT_SOLVENCY_REVIEW.md).
 It treats controlled L1 prices as internal marks and accepts only realized

@@ -1,7 +1,7 @@
 import unittest
 
 from simulation.graph_arbitrage import Pool
-from simulation.mev_defense import best_sandwich, sealed_batch_result
+from simulation.mev_defense import best_sandwich, sealed_batch_result, taxed_round_trip_retention
 
 
 class MEVDefenseTest(unittest.TestCase):
@@ -14,6 +14,9 @@ class MEVDefenseTest(unittest.TestCase):
         result = sealed_batch_result(expired_solver_bond=10**18)
         self.assertEqual(result["sandwich_profit"], 0)
         self.assertEqual(result["treasury_slash_revenue"], 10**18)
+
+    def test_uniform_twenty_percent_tax_costs_thirty_six_percent_round_trip(self):
+        self.assertEqual(taxed_round_trip_retention(10_000), 6_400)
 
 
 if __name__ == "__main__":

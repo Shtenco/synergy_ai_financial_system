@@ -1,6 +1,8 @@
 import unittest
 
-from simulation.graph_arbitrage import Pool, MarketGraph, polygon_contour, qe_external_cost
+from simulation.graph_arbitrage import (
+    Pool, MarketGraph, polygon_contour, qe_external_cost, run_no_burn_experiment,
+)
 
 
 M = 10**6
@@ -13,6 +15,14 @@ class GraphArbitrageTest(unittest.TestCase):
         opportunity = graph.best_usdt_cycle(SIZES)
         if opportunity is not None:
             self.assertGreater(opportunity.profit, 0)
+
+    def test_no_burn_contour_realizes_profit_then_stops(self):
+        result = run_no_burn_experiment()
+        self.assertEqual(result["transfer_burn_bps"], 0)
+        self.assertGreater(result["executions"], 0)
+        self.assertGreater(result["cumulative_profit_usdt"], 0)
+        self.assertLess(result["executions"], 100)
+        self.assertGreaterEqual(result["token_count"], 12)
 
     def test_external_mispricing_produces_realized_usdt_growth(self):
         graph = MarketGraph([
@@ -35,7 +45,7 @@ class GraphArbitrageTest(unittest.TestCase):
 
     def test_40_percent_transfer_burn_blocks_false_triangle_profit(self):
         taxed = polygon_contour(4_000, 4_000).best_usdt_cycle(SIZES)
-        untaxed = polygon_contour(0, 0).best_usdt_cycle(SIZES)
+        untaxed = polygon_contour().best_usdt_cycle(SIZES)
         taxed_profit = 0 if taxed is None else taxed.profit
         untaxed_profit = 0 if untaxed is None else untaxed.profit
         self.assertLessEqual(taxed_profit, untaxed_profit)

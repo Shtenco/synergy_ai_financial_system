@@ -89,8 +89,8 @@ class MarketGraph:
         return best
 
 
-def polygon_contour(syna_tax_bps: int = 4_000, synr_tax_bps: int = 4_000) -> MarketGraph:
-    """Representative connected contour; units use six-decimal quote precision."""
+def polygon_contour(syna_tax_bps: int = 0, synr_tax_bps: int = 0) -> MarketGraph:
+    """Representative no-burn contour; units use six-decimal quote precision."""
     m = 10**6
     return MarketGraph([
         Pool("USDS", "USDT", 5_000_000*m, 5_000_000*m, fee_bps=5),
@@ -100,6 +100,15 @@ def polygon_contour(syna_tax_bps: int = 4_000, synr_tax_bps: int = 4_000) -> Mar
         Pool("SYNA", "SYNR", 300_000*m, 120_000*m, tax0_bps=syna_tax_bps, tax1_bps=synr_tax_bps),
         Pool("SYNA", "USDS", 400_000*m, 1_200*m, tax0_bps=syna_tax_bps),
         Pool("SYNR", "USDT", 100_000*m, 1_400*m, tax0_bps=synr_tax_bps),
+        Pool("USDC", "USDT", 5_000_000*m, 5_000_000*m, fee_bps=5),
+        Pool("DAI", "USDC", 5_000_000*m, 5_000_000*m, fee_bps=5),
+        Pool("WETH", "USDT", 1_000*m, 3_000_000*m),
+        Pool("WETH", "WPOL", 1_000*m, 7_500_000*m),
+        Pool("WBTC", "USDT", 100*m, 6_000_000*m),
+        Pool("WBTC", "WETH", 100*m, 2_000*m),
+        Pool("LINK", "WPOL", 100_000*m, 3_750_000*m),
+        Pool("AAVE", "WETH", 10_000*m, 333*m),
+        Pool("CRV", "USDC", 1_000_000*m, 500_000*m),
     ])
 
 
@@ -108,3 +117,33 @@ def qe_external_cost(token: str, amount: int, paired_reserve: int) -> int:
     if token in {"SYNA", "SYNR"}:
         return paired_reserve
     return amount + paired_reserve
+
+
+def run_no_burn_experiment(max_rounds: int = 100, gas_usdt: float = 0.05) -> dict[str, object]:
+    """Repeatedly execute the best no-burn route until discrete profit closes."""
+    graph = polygon_contour()
+    amounts = tuple(value * 10**6 for value in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1_000, 2_000))
+    profit = 0
+    gas = int(gas_usdt * 10**6)
+    routes: list[dict[str, object]] = []
+    for _ in range(max_rounds):
+        opportunity = graph.best_usdt_cycle(amounts)
+        if opportunity is None or opportunity.profit <= gas:
+            break
+        graph, output = graph.execute(opportunity.route, opportunity.amount_in)
+        realized = output - opportunity.amount_in - opportunity.flash_fee - gas
+        profit += realized
+        routes.append({
+            "route": "->".join(opportunity.route),
+            "amount_in_usdt": opportunity.amount_in / 10**6,
+            "profit_usdt": realized / 10**6,
+        })
+    return {
+        "transfer_burn_bps": 0,
+        "flash_fee_bps": 9,
+        "gas_usdt_per_execution": gas_usdt,
+        "executions": len(routes),
+        "cumulative_profit_usdt": profit / 10**6,
+        "routes": routes,
+        "token_count": len({token for pool in graph.pools for token in (pool.token0, pool.token1)}),
+    }

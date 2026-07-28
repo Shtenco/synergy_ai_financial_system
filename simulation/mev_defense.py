@@ -23,3 +23,9 @@ def best_sandwich(pool: Pool, victim_token_in: str, victim_amount: int) -> dict[
 def sealed_batch_result(expired_solver_bond: int = 0) -> dict[str, int]:
     """No route leakage means no modeled sandwich; expired voluntary bonds accrue."""
     return {"sandwich_profit": 0, "treasury_slash_revenue": expired_solver_bond}
+
+
+def taxed_round_trip_retention(amount: int, tax_bps: int = 2_000) -> int:
+    """Two uniformly taxed transfers, before AMM fees and price impact."""
+    after_entry = amount * (10_000 - tax_bps) // 10_000
+    return after_entry * (10_000 - tax_bps) // 10_000

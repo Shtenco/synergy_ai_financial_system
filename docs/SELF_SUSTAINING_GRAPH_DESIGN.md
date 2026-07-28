@@ -6,17 +6,17 @@
    exceeds its baseline, then applies a one-hour timelock and 24-hour expiry.
 2. `GraphTreasury` is custody. Only allowlisted modules can consume a policy and
    move or burn exactly its bounded amount.
-3. `LiquidityGrowthCycle` executes remove 15%, send 10% LP to the dead address,
-   buy back with half the released quote, mint base, and add liquidity.
+3. `LiquidityGrowthCycle` executes remove 15%, buy back with half the released
+   quote, mint base, and add liquidity with per-leg minimum outputs.
 4. `MEV24hVault` escrows output from integrated routes for 24 hours; an early
    exit sends 40% to the burn sink.
 
 ## Accounting result
 
 The integer simulator uses the Uniswap V2 formula with a 30 bps fee and router-
-style ratio-limited liquidity addition. Reserves stay solvent and normalized
-`k` does not decrease, but repeated 10% LP destruction exhausts executable
-treasury LP after 59 cycles in the deterministic fixture. External quote-reserve LNAV does not grow: buybacks,
+style ratio-limited liquidity addition. The legacy simulator demonstrates why
+LP destruction was removed: repeated 10% destruction exhausts executable
+treasury LP. External quote-reserve LNAV does not grow: buybacks,
 LP removal, and re-addition merely rearrange existing assets. Minted SYNA/SYNR
 must not be counted as free profit because they create a corresponding token
 liability/dilution. Burning LP destroys the treasury's claim; it does not free

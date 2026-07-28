@@ -20,23 +20,41 @@ contract GraphPolicy {
     uint64 public constant MIN_DELAY = 1 hours;
     uint64 public constant MAX_WINDOW = 24 hours;
     address public immutable governor;
+    address public immutable guardian;
     address public operator;
+    bool public paused;
     uint256 public nonce;
     mapping(uint256 => Proposal) public proposals;
     mapping(address => bool) public consumers;
 
     event Proposed(uint256 indexed id, Action action, uint256 baselineLnav, uint256 expectedLnav);
     event Executed(uint256 indexed id);
+    event Cancelled(uint256 indexed id);
+    event Paused(bool paused);
 
     error Unauthorized();
     error NoImprovement();
     error InvalidWindow();
     error NotExecutable();
 
-    constructor(address governor_, address operator_) {
-        require(governor_ != address(0) && operator_ != address(0));
+    constructor(address governor_, address guardian_, address operator_) {
+        require(governor_ != address(0) && guardian_ != address(0) && operator_ != address(0));
         governor = governor_;
+        guardian = guardian_;
         operator = operator_;
+    }
+
+    function setPaused(bool next) external {
+        if (msg.sender != guardian && msg.sender != governor) revert Unauthorized();
+        paused = next;
+        emit Paused(next);
+    }
+
+    function cancel(uint256 id) external {
+        if (msg.sender != guardian && msg.sender != governor) revert Unauthorized();
+        if (proposals[id].executed) revert NotExecutable();
+        proposals[id].executed = true;
+        emit Cancelled(id);
     }
 
     function setOperator(address next) external {
@@ -60,6 +78,7 @@ contract GraphPolicy {
         uint64 delay
     ) external returns (uint256 id) {
         if (msg.sender != operator) revert Unauthorized();
+        if (paused) revert NotExecutable();
         if (expectedLnav <= baselineLnav) revert NoImprovement();
         if (delay < MIN_DELAY) revert InvalidWindow();
         id = ++nonce;
@@ -75,6 +94,7 @@ contract GraphPolicy {
 
     function consume(uint256 id, address executor) external returns (Proposal memory proposal) {
         proposal = proposals[id];
+        if (paused) revert NotExecutable();
         if (!consumers[msg.sender] || executor != proposal.target) revert Unauthorized();
         if (proposal.executed || block.timestamp < proposal.executableAt || block.timestamp > proposal.expiresAt) {
             revert NotExecutable();

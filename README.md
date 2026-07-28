@@ -57,6 +57,9 @@ documented in [`docs/ANTI_MEV_DESIGN.md`](docs/ANTI_MEV_DESIGN.md).
 The current deployment blockers and completed hardening work are tracked in
 [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md).
 
+The voluntary external-solver auction and reserve-safe revenue attribution are
+documented in [`docs/ORDERFLOW_REVENUE.md`](docs/ORDERFLOW_REVENUE.md).
+
 The two-chain bridge/QE solvency model is documented in
 [`docs/DUAL_CIRCUIT_SOLVENCY_REVIEW.md`](docs/DUAL_CIRCUIT_SOLVENCY_REVIEW.md).
 It treats controlled L1 prices as internal marks and accepts only realized
@@ -67,7 +70,7 @@ Run the explicit unsafe-mechanism experiment (simulation only) with
 
 For the mandatory archival Polygon fork gate, configure `POLYGON_RPC_URL` and
 `FORK_BLOCK_NUMBER=60000000`, install the pinned npm dependencies, and run
-`npm run compile`. Mainnet deployment is intentionally not automated.
+`npm run compile && npm run fork:preflight`. Mainnet deployment is intentionally not automated.
 
 ## Read-only Polygon balance check
 

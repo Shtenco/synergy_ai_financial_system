@@ -19,15 +19,18 @@ order flow plus atomic limits and objective solver slashing.
   controlled.
 - Solver bonds are bounded and objectively slashable only after expiry.
 
-## Remaining blockers
+## Remaining external assurance blockers
 
-1. Bind policy consumption, route commitment, and graph execution atomically.
-2. Replace privileged EOAs with a timelocked multisig and independent guardian.
-3. Add pause, cancellation, daily loss limits, oracle/TWAP deviation bounds, and
-   flash-lender-specific callback validation.
-4. Compile and test all Solidity, fuzz reentrancy/token edge cases, and run a
-   pinned archival Polygon fork against exact deployed bytecode.
-5. Obtain independent audits before funding. Do not use any key posted in chat.
+The revision adds policy pause/cancel, an independent guardian, a 24-hour
+N-of-M timelocked controller, and an ERC-3156 executor that atomically consumes
+policy, enforces daily notional, validates a fresh bounded oracle price, checks
+principal+premium+profit, and taxes realized profit. The remaining blockers are:
+
+1. Compile and test all Solidity and fuzz reentrancy/token edge cases.
+2. Run the pinned archival Polygon preflight against exact deployed bytecode.
+3. Extend the fork suite with funded route fixtures and adversarial ordering.
+4. Obtain multiple independent audits before funding.
+5. Do not use any key posted in chat.
 
 Uniform 20% transfer tax makes a two-hop round trip retain at most 64% before DEX
 fees and slippage. It may suppress arbitrage but also fragments liquidity and can

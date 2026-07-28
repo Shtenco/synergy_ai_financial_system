@@ -19,13 +19,13 @@ sandwich value. A sealed route exposes no modeled pre-trade information, reducin
 that value to zero; expired solver bonds are protocol revenue. Real builders can
 still censor or leak bundles, so this is mitigation rather than complete immunity.
 
-## Mandatory operating controls
+## Operating controls
 
-The reveal transaction must not enter the public mempool: use an encrypted
-private order-flow endpoint or a batch-auction builder, and include reveal plus
-execution in one bundle. Set per-leg minimum outputs, a short deadline, protected
-asset balance floors, codehash-pinned targets, and a post-trade settlement-profit
-check. Pause execution if private submission is unavailable.
+Private order flow is recommended but not mandatory. Public-RPC execution must
+use atomic policy consumption, per-leg minimum outputs, a short deadline,
+protected-asset balance floors, codehash-pinned targets, TWAP bounds, daily
+limits, and a post-trade settlement-profit check. These make a manipulated
+transaction revert, but cannot prevent validators from censoring it.
 
 `ProtocolTaxToken` is a migration reference with a uniform 20–30% treasury tax
 and no transfer exemptions. This satisfies uniform treatment but does not detect

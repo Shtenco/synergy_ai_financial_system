@@ -6,6 +6,7 @@
   "scripts": {
     "compile": "hardhat compile",
     "test": "python -m unittest discover -s tests -v",
+    "fork:preflight": "hardhat run scripts/fork_preflight.js --network hardhat",
     "fork:node": "node node_modules/hardhat/internal/cli/cli.js node --network hardhat",
     "fork:demo": "node node_modules/hardhat/internal/cli/cli.js run scripts/deploy_fork_pair.js --network hardhat",
     "deploy:ai": "node node_modules/hardhat/internal/cli/cli.js run scripts/deploy_ai_stack.js --network hardhat",

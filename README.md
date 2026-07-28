@@ -67,7 +67,7 @@ Run the explicit unsafe-mechanism experiment (simulation only) with
 
 For the mandatory archival Polygon fork gate, configure `POLYGON_RPC_URL` and
 `FORK_BLOCK_NUMBER=60000000`, install the pinned npm dependencies, and run
-`npm run compile`. Mainnet deployment is intentionally not automated.
+`npm run compile && npm run fork:preflight`. Mainnet deployment is intentionally not automated.
 
 ## Read-only Polygon balance check
 

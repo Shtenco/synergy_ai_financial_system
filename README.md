@@ -60,6 +60,10 @@ The current deployment blockers and completed hardening work are tracked in
 The voluntary external-solver auction and reserve-safe revenue attribution are
 documented in [`docs/ORDERFLOW_REVENUE.md`](docs/ORDERFLOW_REVENUE.md).
 
+After deployment, Polygon solvers can discover announcements with
+`npm run solver:watch` and submit voluntary bids with `npm run solver:bid`; see
+`solver/auction-manifest.example.json` for the public discovery manifest.
+
 The two-chain bridge/QE solvency model is documented in
 [`docs/DUAL_CIRCUIT_SOLVENCY_REVIEW.md`](docs/DUAL_CIRCUIT_SOLVENCY_REVIEW.md).
 It treats controlled L1 prices as internal marks and accepts only realized

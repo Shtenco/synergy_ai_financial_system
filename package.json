@@ -1,0 +1,26 @@
+{
+  "name": "shtenco-qe-bridge-ai",
+  "version": "2.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "python -m unittest discover -s tests -v",
+    "fork:preflight": "hardhat run scripts/fork_preflight.js --network hardhat",
+    "fork:node": "node node_modules/hardhat/internal/cli/cli.js node --network hardhat",
+    "fork:demo": "node node_modules/hardhat/internal/cli/cli.js run scripts/deploy_fork_pair.js --network hardhat",
+    "deploy:ai": "node node_modules/hardhat/internal/cli/cli.js run scripts/deploy_ai_stack.js --network hardhat",
+    "test:python": "python -m unittest ai_centrobank_sinergy.test_engine -v",
+    "preflight:fork": "node node_modules/hardhat/internal/cli/cli.js run scripts/fork_preflight.js --network hardhat",
+    "compile:top-ai": "cd TOP_AI && node ../node_modules/hardhat/internal/cli/cli.js compile",
+    "test:top-ai": "cd TOP_AI && node ../node_modules/hardhat/internal/cli/cli.js test",
+    "deploy:top-ai": "cd TOP_AI && node ../node_modules/hardhat/internal/cli/cli.js run scripts/deploy_top_ai_contour.js --network hardhat"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "3.0.8",
+    "@openzeppelin/contracts": "5.6.1",
+    "dotenv": "17.4.2",
+    "ethers": "6.17.0",
+    "hardhat": "2.22.19"
+  }
+}

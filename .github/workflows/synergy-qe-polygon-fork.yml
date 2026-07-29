@@ -46,11 +46,16 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Patch reserved Solidity identifier
+        run: perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
+
       - name: Compile contracts
         run: npx hardhat compile
 
       - name: Run Polygon fork test
-        run: npx hardhat test test/synergy_qe_polygon_fork.js | tee reports/fork-test.log
+        run: |
+          mkdir -p reports
+          npx hardhat test test/synergy_qe_polygon_fork.js | tee reports/fork-test.log
 
       - name: Build graphs
         if: always()

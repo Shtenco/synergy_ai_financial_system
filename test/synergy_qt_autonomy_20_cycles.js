@@ -174,7 +174,9 @@ describe("Synergy QT ownerless autonomous controller - 20 real cycles", function
     assert.ok(totalKeeperProfitAfterGas > 0n, "20-cycle keeper network was not profitable after gas");
     assert.equal(await controller.halted(), true, "controller did not halt after exhausting inventory");
     assert.equal(await controller.phase(), 3n, "controller did not enter terminal phase");
-    await assert.rejects(controller.connect(keeperA).step({ gasLimit: TX_GAS_LIMIT }));
+    await assert.rejects(
+      controller.connect(keeperA).step({ gasLimit: TX_GAS_LIMIT }).then((tx) => tx.wait())
+    );
 
     const result = {
       scenario: "autonomous_qt_20_cycles",

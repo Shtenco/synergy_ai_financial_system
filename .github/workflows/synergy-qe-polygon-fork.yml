@@ -28,7 +28,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Using Polygon archive RPC selector"
           echo "POLYGON_RPC_URL=https://polygon.drpc.org" >> "$GITHUB_ENV"
       - name: Install Node dependencies
         run: npm ci
@@ -39,6 +38,7 @@ jobs:
       - name: Start Anvil Polygon fork
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p reports
           anvil --fork-url "$POLYGON_RPC_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --chain-id 137 --hardfork shanghai --host 127.0.0.1 --port 8545 > reports/anvil.log 2>&1 &
           for i in $(seq 1 60); do
@@ -47,11 +47,15 @@ jobs:
           done
           cat reports/anvil.log
           exit 1
-      - name: Run autonomous QT 20 cycles
-        run: npx hardhat test test/synergy_qt_autonomy_20_cycles.js --network polygonFork 2>&1 | tee reports/fork-test.log
+      - name: Run absolute solvency and dividend QT fork test
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/absolute_solvency_dividend_qt_fork.js --network polygonFork 2>&1 | tee reports/fork-test.log
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: qt-autonomy-results
+          name: absolute-solvency-dividend-results
           path: reports/*
+          if-no-files-found: warn

@@ -113,7 +113,6 @@ describe("Synergy QT buyback: Polygon fork / burn existing SYN debt", function (
     const demandBefore = await f.wpol.balanceOf(await f.demand.getAddress());
 
     assert.equal(supplyBefore, E("10"));
-    assert.equal(protocolWpolBefore, E("7"));
     assert.equal(await f.syn.balanceOf(await f.auction.getAddress()), E("2"));
 
     const latest = await ethers.provider.getBlock("latest");

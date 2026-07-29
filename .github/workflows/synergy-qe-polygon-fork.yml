@@ -8,9 +8,10 @@ on:
 jobs:
   fork-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       FORK_BLOCK_NUMBER: "90790000"
+      LOCAL_FORK_URL: "http://127.0.0.1:8545"
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +23,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
 
       - name: Select archive-capable Polygon RPC
         shell: bash
@@ -57,7 +62,7 @@ jobs:
             fi
             echo "Rejected $RPC"
           done
-          echo "No public RPC supplied historical Polygon contract state at block $FORK_BLOCK_NUMBER" >&2
+          echo "No public RPC supplied historical Polygon state at block $FORK_BLOCK_NUMBER" >&2
           exit 1
 
       - name: Install Node dependencies
@@ -69,12 +74,44 @@ jobs:
       - name: Compile contracts
         run: npx hardhat compile
 
-      - name: Run Polygon fork test
+      - name: Start Anvil Polygon fork
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p reports
-          npx hardhat test test/synergy_qe_polygon_fork.js 2>&1 | tee reports/fork-test.log
+          anvil \
+            --fork-url "$POLYGON_RPC_URL" \
+            --fork-block-number "$FORK_BLOCK_NUMBER" \
+            --chain-id 137 \
+            --hardfork shanghai \
+            --host 127.0.0.1 \
+            --port 8545 \
+            > reports/anvil.log 2>&1 &
+          echo $! > reports/anvil.pid
+
+          for i in $(seq 1 60); do
+            RESPONSE=$(curl -sS --max-time 2 -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+              "$LOCAL_FORK_URL" || true)
+            if echo "$RESPONSE" | grep -q '"result":"0x89"'; then
+              echo "Anvil Polygon fork is ready"
+              curl -sS -H 'content-type: application/json' \
+                --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":2}' \
+                "$LOCAL_FORK_URL" | tee reports/anvil-ready.json
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat reports/anvil.log || true
+          echo "Anvil failed to start" >&2
+          exit 1
+
+      - name: Run Polygon fork test through Anvil
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/synergy_qe_polygon_fork.js --network polygonFork 2>&1 | tee reports/fork-test.log
 
       - name: Build graphs
         if: always()
@@ -90,7 +127,7 @@ jobs:
             echo "No complete fork result set; skipping charts"
           fi
 
-      - name: Upload results and graphs
+      - name: Upload results, graphs and node logs
         if: always()
         uses: actions/upload-artifact@v4
         with:

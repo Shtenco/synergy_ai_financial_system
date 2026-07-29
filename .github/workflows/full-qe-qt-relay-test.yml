@@ -1,0 +1,31 @@
+name: Full QE QT Relay Integration
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORK_BLOCK_NUMBER: "90790000"
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: npm ci
+      - run: npx hardhat compile
+      - name: Start Polygon fork
+        run: |
+          anvil --fork-url "$POLYGON_RPC_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --chain-id 137 --host 127.0.0.1 --port 8545 > fork.log 2>&1 &
+          sleep 10
+      - name: Run complete system test
+        run: npx hardhat test test/absolute_solvency_dividend_relay_full_fork.js --network polygonFork
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: full-qe-qt-relay-report
+          path: reports/

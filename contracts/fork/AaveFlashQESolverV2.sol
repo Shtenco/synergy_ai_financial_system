@@ -42,9 +42,7 @@ interface IAavePoolSolverV2 {
     ) external;
 }
 
-/// @notice Aave V3-compatible flash-loan receiver. Unlike the first harness,
-/// this contract implements every function required by IFlashLoanSimpleReceiver:
-/// executeOperation(), ADDRESSES_PROVIDER(), and POOL().
+/// @notice Aave V3-compatible flash-loan receiver used by the fork audit.
 contract AaveFlashQESolverV2 {
     IAavePoolSolverV2 public immutable pool;
     address public immutable addressesProvider;
@@ -75,6 +73,7 @@ contract AaveFlashQESolverV2 {
         uint256 profit,
         uint256 synAmount
     );
+    event ProfitClaimed(address indexed receiver, uint256 amount);
 
     constructor(
         IAavePoolSolverV2 pool_,
@@ -97,12 +96,10 @@ contract AaveFlashQESolverV2 {
         _;
     }
 
-    // Required by Aave IFlashLoanSimpleReceiver.
     function ADDRESSES_PROVIDER() external view returns (address) {
         return addressesProvider;
     }
 
-    // Required by Aave IFlashLoanSimpleReceiver.
     function POOL() external view returns (address) {
         return address(pool);
     }
@@ -131,6 +128,15 @@ contract AaveFlashQESolverV2 {
             uint8(2), uint256(0), uint256(0), uint256(0), bytes32(0), uint64(0), minProfit, pair
         );
         pool.flashLoanSimple(address(this), address(wpol), borrowAmount, params, 0);
+    }
+
+    /// @notice Transfers all settled WPOL profit to the operator-selected receiver.
+    /// The autonomous controller uses this immediately after every completed cycle.
+    function claimProfit(address receiver) external onlyOperator returns (uint256 amount) {
+        if (receiver == address(0)) revert Unauthorized();
+        amount = wpol.balanceOf(address(this));
+        if (amount > 0 && !wpol.transfer(receiver, amount)) revert TransferFailed();
+        emit ProfitClaimed(receiver, amount);
     }
 
     function executeOperation(

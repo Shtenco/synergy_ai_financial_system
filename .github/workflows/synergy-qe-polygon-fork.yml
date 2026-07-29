@@ -1,0 +1,72 @@
+name: Synergy QE Polygon Fork
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  fork-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      FORK_BLOCK_NUMBER: "90790000"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Select archival Polygon RPC
+        shell: bash
+        run: |
+          set -euo pipefail
+          BLOCK_HEX=$(printf '0x%x' "$FORK_BLOCK_NUMBER")
+          for RPC in \
+            https://polygon-bor-rpc.publicnode.com \
+            https://polygon-rpc.com \
+            https://rpc.ankr.com/polygon; do
+            BODY=$(printf '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["%s",false],"id":1}' "$BLOCK_HEX")
+            RESPONSE=$(curl -fsS --max-time 20 -H 'content-type: application/json' --data "$BODY" "$RPC" || true)
+            if echo "$RESPONSE" | grep -q '"result":{"'; then
+              echo "POLYGON_RPC_URL=$RPC" >> "$GITHUB_ENV"
+              echo "Selected $RPC"
+              exit 0
+            fi
+          done
+          echo "No archival Polygon RPC returned block $FORK_BLOCK_NUMBER" >&2
+          exit 1
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Compile contracts
+        run: npx hardhat compile
+
+      - name: Run Polygon fork test
+        run: npx hardhat test test/synergy_qe_polygon_fork.js | tee reports/fork-test.log
+
+      - name: Build graphs
+        if: always()
+        run: |
+          python -m pip install --disable-pip-version-check matplotlib
+          if [ -f reports/synergy_qe_polygon_fork_results.json ]; then
+            python scripts/plot_synergy_qe_fork.py
+          fi
+
+      - name: Upload results and graphs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-qe-polygon-fork-results
+          path: |
+            reports/*.json
+            reports/*.png
+            reports/*.log
+          if-no-files-found: warn

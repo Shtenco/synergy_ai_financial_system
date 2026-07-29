@@ -15,6 +15,8 @@ const forkUrl = process.env.POLYGON_RPC_URL || "";
 const blockNumber = process.env.FORK_BLOCK_NUMBER
   ? Number(process.env.FORK_BLOCK_NUMBER)
   : undefined;
+const localForkUrl = process.env.LOCAL_FORK_URL || "http://127.0.0.1:8545";
+const anvilMnemonic = "test test test test test test test test test test test junk";
 
 module.exports = {
   solidity: {
@@ -29,10 +31,6 @@ module.exports = {
     hardhat: {
       chainId: 31337,
       hardfork: "shanghai",
-      // Hardhat/EDR doesn't ship a Polygon PoS activation history.
-      // The pinned fork state is executed under Shanghai; Cancun caused
-      // ExcessBlobGasNotSet because Polygon block headers don't expose
-      // Ethereum blob-gas fields.
       chains: {
         137: {
           hardforkHistory: {
@@ -43,11 +41,19 @@ module.exports = {
       forking: forkUrl ? { url: forkUrl, blockNumber } : undefined,
       accounts: { count: 20, accountsBalance: "100000000000000000000000" }
     },
+    polygonFork: {
+      chainId: 137,
+      url: localForkUrl,
+      accounts: {
+        mnemonic: anvilMnemonic,
+        count: 20
+      }
+    },
     polygon: {
       chainId: 137,
       url: forkUrl || "http://127.0.0.1:8545",
       accounts: process.env.OWNER_PRIVATE_KEY ? [process.env.OWNER_PRIVATE_KEY] : []
     }
   },
-  mocha: { timeout: 120000 }
+  mocha: { timeout: 240000 }
 };

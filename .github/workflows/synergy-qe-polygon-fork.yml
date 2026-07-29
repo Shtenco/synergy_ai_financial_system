@@ -23,24 +23,41 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Select archival Polygon RPC
+      - name: Select archive-capable Polygon RPC
         shell: bash
         run: |
           set -euo pipefail
           BLOCK_HEX=$(printf '0x%x' "$FORK_BLOCK_NUMBER")
+          WPOL=0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270
+          FACTORY=0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32
           for RPC in \
-            https://polygon-bor-rpc.publicnode.com \
-            https://polygon-rpc.com \
-            https://rpc.ankr.com/polygon; do
-            BODY=$(printf '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["%s",false],"id":1}' "$BLOCK_HEX")
-            RESPONSE=$(curl -fsS --max-time 20 -H 'content-type: application/json' --data "$BODY" "$RPC" || true)
-            if echo "$RESPONSE" | grep -q '"result":{"'; then
+            https://polygon.drpc.org \
+            https://tenderly.rpc.polygon.community \
+            https://polygon-public.nodies.app \
+            https://1rpc.io/matic \
+            https://polygon.api.onfinality.io/public \
+            https://polygon-mainnet.gateway.tatum.io/ \
+            https://polygon.publicnode.com; do
+            echo "Testing $RPC"
+            CODE_BODY=$(printf '{"jsonrpc":"2.0","method":"eth_getCode","params":["%s","%s"],"id":1}' "$WPOL" "$BLOCK_HEX")
+            STORAGE_BODY=$(printf '{"jsonrpc":"2.0","method":"eth_getStorageAt","params":["%s","0x0","%s"],"id":2}' "$WPOL" "$BLOCK_HEX")
+            CALL_BODY=$(printf '{"jsonrpc":"2.0","method":"eth_call","params":[{"to":"%s","data":"0x18160ddd"},"%s"],"id":3}' "$WPOL" "$BLOCK_HEX")
+            FACTORY_BODY=$(printf '{"jsonrpc":"2.0","method":"eth_getCode","params":["%s","%s"],"id":4}' "$FACTORY" "$BLOCK_HEX")
+            CODE=$(curl -sS --max-time 25 -H 'content-type: application/json' --data "$CODE_BODY" "$RPC" || true)
+            STORAGE=$(curl -sS --max-time 25 -H 'content-type: application/json' --data "$STORAGE_BODY" "$RPC" || true)
+            CALL=$(curl -sS --max-time 25 -H 'content-type: application/json' --data "$CALL_BODY" "$RPC" || true)
+            FACTORY_CODE=$(curl -sS --max-time 25 -H 'content-type: application/json' --data "$FACTORY_BODY" "$RPC" || true)
+            if echo "$CODE" | grep -Eq '"result":"0x[0-9a-fA-F]{4,}"' \
+              && echo "$STORAGE" | grep -Eq '"result":"0x[0-9a-fA-F]+"' \
+              && echo "$CALL" | grep -Eq '"result":"0x[0-9a-fA-F]+"' \
+              && echo "$FACTORY_CODE" | grep -Eq '"result":"0x[0-9a-fA-F]{4,}"'; then
               echo "POLYGON_RPC_URL=$RPC" >> "$GITHUB_ENV"
-              echo "Selected $RPC"
+              echo "Selected archive RPC: $RPC"
               exit 0
             fi
+            echo "Rejected $RPC"
           done
-          echo "No archival Polygon RPC returned block $FORK_BLOCK_NUMBER" >&2
+          echo "No public RPC supplied historical Polygon contract state at block $FORK_BLOCK_NUMBER" >&2
           exit 1
 
       - name: Install Node dependencies
@@ -53,16 +70,24 @@ jobs:
         run: npx hardhat compile
 
       - name: Run Polygon fork test
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p reports
-          npx hardhat test test/synergy_qe_polygon_fork.js | tee reports/fork-test.log
+          npx hardhat test test/synergy_qe_polygon_fork.js 2>&1 | tee reports/fork-test.log
 
       - name: Build graphs
         if: always()
+        shell: bash
         run: |
+          set -euo pipefail
           python -m pip install --disable-pip-version-check matplotlib
-          if [ -f reports/synergy_qe_polygon_fork_results.json ]; then
+          if [ -f reports/synergy_qe_polygon_fork_results.json ] \
+            && grep -q '"open_amm"' reports/synergy_qe_polygon_fork_results.json \
+            && grep -q '"closed_qe_vault"' reports/synergy_qe_polygon_fork_results.json; then
             python scripts/plot_synergy_qe_fork.py
+          else
+            echo "No complete fork result set; skipping charts"
           fi
 
       - name: Upload results and graphs

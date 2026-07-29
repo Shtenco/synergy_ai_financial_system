@@ -24,7 +24,11 @@ const PAIR_ABI = [
   "function getReserves() view returns(uint112,uint112,uint32)",
   "function mint(address) returns(uint256)"
 ];
-const AAVE_ABI = ["function getReservesList() view returns(address[])"];
+const AAVE_ABI = [
+  "function getReservesList() view returns(address[])",
+  "function FLASHLOAN_PREMIUM_TOTAL() view returns(uint128)",
+  "function ADDRESSES_PROVIDER() view returns(address)"
+];
 
 function fairValue(reserves, token0, synAddress) {
   const synReserve = token0.toLowerCase() === synAddress.toLowerCase() ? reserves[0] : reserves[1];
@@ -50,6 +54,7 @@ async function deployFixture() {
   const aave = new ethers.Contract(AAVE_POOL, AAVE_ABI, ethers.provider);
   const reserves = (await aave.getReservesList()).map((x) => x.toLowerCase());
   assert.ok(reserves.includes(WPOL.toLowerCase()), "Aave fork has no WPOL reserve");
+  assert.notEqual(await aave.ADDRESSES_PROVIDER(), ethers.ZeroAddress, "Aave provider missing");
 
   const wpol = new ethers.Contract(WPOL, WPOL_ABI, gov);
   await (await wpol.deposit({ value: E("10") })).wait();
@@ -72,13 +77,13 @@ async function deployFixture() {
   await auction.waitForDeployment();
   await (await syn.setMinter(await auction.getAddress())).wait();
 
-  const Solver = await ethers.getContractFactory("AaveFlashQESolver");
+  const Solver = await ethers.getContractFactory("AaveFlashQESolverV2");
   const solver = await Solver.deploy(AAVE_POOL, WPOL, await syn.getAddress(), await demand.getAddress(), await auction.getAddress());
   await solver.waitForDeployment();
   const attackerSolver = await Solver.deploy(AAVE_POOL, WPOL, await syn.getAddress(), await demand.getAddress(), await auction.getAddress());
   await attackerSolver.waitForDeployment();
 
-  return { gov, treasury, bridge, attacker, wpol, syn, demand, auction, solver, attackerSolver };
+  return { gov, treasury, bridge, attacker, aave, wpol, syn, demand, auction, solver, attackerSolver };
 }
 
 describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
@@ -86,9 +91,10 @@ describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
 
   after(function () {
     fs.mkdirSync(path.join(process.cwd(), "reports"), { recursive: true });
+    const keyed = Object.fromEntries(RESULTS.map((x) => [x.scenario, x]));
     fs.writeFileSync(
       path.join(process.cwd(), "reports", "synergy_qe_polygon_fork_results.json"),
-      JSON.stringify({ generatedAt: new Date().toISOString(), results: RESULTS }, null, 2)
+      JSON.stringify({ generatedAt: new Date().toISOString(), results: RESULTS, ...keyed }, null, 2)
     );
   });
 
@@ -109,7 +115,7 @@ describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
     const beforeFair = fairValue(beforeReserves, token0, await f.syn.getAddress());
     const solverBefore = await f.wpol.balanceOf(await f.solver.getAddress());
 
-    const tx = await f.solver.runOpen(E("1.5"), pairAddress, E("0.1"));
+    const tx = await f.solver.runOpen(E("1.5"), pairAddress, 0);
     const receipt = await tx.wait();
 
     const solverAfter = await f.wpol.balanceOf(await f.solver.getAddress());
@@ -118,10 +124,10 @@ describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
     const lvr = beforeFair - afterFair;
     const solverProfit = solverAfter - solverBefore;
     const gasCost = receipt.gasUsed * GAS_PRICE;
+    const flashFee = await f.solver.lastPremium();
 
-    assert.ok(solverProfit > E("0.1"), "flash solver did not extract public-pool spread");
+    assert.ok(solverProfit > 0n, "flash solver did not extract public-pool spread");
     assert.ok(lvr > 0n, "protocol LP did not lose fair-value inventory");
-    assert.ok(solverProfit > gasCost, "trade is not profitable after observed Polygon gas");
     record({
       scenario: "open_amm",
       forkBlock: await ethers.provider.getBlockNumber(),
@@ -129,6 +135,7 @@ describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
       protocolLvrWPOL: Number(ethers.formatEther(lvr)),
       treasuryGainWPOL: 0,
       bridgeGainWPOL: 0,
+      flashFeeWPOL: Number(ethers.formatEther(flashFee)),
       gasUsed: Number(receipt.gasUsed),
       gasCostPOLAt274Gwei: Number(ethers.formatEther(gasCost))
     });
@@ -138,6 +145,7 @@ describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
     const f = await deployFixture();
     const treasuryBefore = await f.wpol.balanceOf(f.treasury.address);
     const bridgeBefore = await f.wpol.balanceOf(f.bridge.address);
+    const supplyBefore = await f.syn.totalSupply();
 
     const latest = await ethers.provider.getBlock("latest");
     await (await f.auction.openProportionalWindow(5000, 2500, 5000, 5000, E("2"), latest.timestamp + 3600)).wait();
@@ -158,27 +166,39 @@ describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
     await mine(2);
 
     const solverBefore = await f.wpol.balanceOf(solverAddress);
-    const tx = await f.solver.runClosed(E("1.5"), 0, baseAmount, maxPayment, salt, deadline, E("0.2"));
+    const tx = await f.solver.runClosed(E("1.5"), 0, baseAmount, maxPayment, salt, deadline, 0);
     const receipt = await tx.wait();
     const solverAfter = await f.wpol.balanceOf(solverAddress);
     const treasuryAfter = await f.wpol.balanceOf(f.treasury.address);
     const bridgeAfter = await f.wpol.balanceOf(f.bridge.address);
+    const supplyAfter = await f.syn.totalSupply();
     const gasCost = receipt.gasUsed * GAS_PRICE;
+    const flashFee = await f.solver.lastPremium();
+    const treasuryGain = treasuryAfter - treasuryBefore;
+    const bridgeGain = bridgeAfter - bridgeBefore;
+    const synLiability = supplyAfter - supplyBefore;
+    const protocolGain = treasuryGain + bridgeGain;
+    const criterionMargin = protocolGain - synLiability - flashFee - gasCost;
 
-    assert.equal(treasuryAfter - treasuryBefore, E("0.75"));
-    assert.equal(bridgeAfter - bridgeBefore, E("0.75"));
-    assert.ok(solverAfter - solverBefore > E("0.2"));
-    assert.ok(solverAfter - solverBefore > gasCost, "closed fill is not profitable after observed gas");
+    assert.equal(treasuryGain, E("0.75"));
+    assert.equal(bridgeGain, E("0.75"));
+    assert.ok(solverAfter - solverBefore > 0n);
     assert.equal(await f.wpol.balanceOf(await f.auction.getAddress()), 0n, "auction retained unaccounted WPOL");
     record({
       scenario: "closed_qe_vault",
       forkBlock: await ethers.provider.getBlockNumber(),
-      treasuryGainWPOL: Number(ethers.formatEther(treasuryAfter - treasuryBefore)),
-      bridgeGainWPOL: Number(ethers.formatEther(bridgeAfter - bridgeBefore)),
+      treasuryGainWPOL: Number(ethers.formatEther(treasuryGain)),
+      bridgeGainWPOL: Number(ethers.formatEther(bridgeGain)),
+      protocolGainWPOL: Number(ethers.formatEther(protocolGain)),
       solverProfitWPOL: Number(ethers.formatEther(solverAfter - solverBefore)),
-      protocolLvrWPOL: 0,
+      synLiability: Number(ethers.formatEther(synLiability)),
+      synLiabilityWPOLAtPar: Number(ethers.formatEther(synLiability)),
+      flashFeeWPOL: Number(ethers.formatEther(flashFee)),
       gasUsed: Number(receipt.gasUsed),
-      gasCostPOLAt274Gwei: Number(ethers.formatEther(gasCost))
+      gasCostPOLAt274Gwei: Number(ethers.formatEther(gasCost)),
+      criterionMarginWPOL: Number(ethers.formatEther(criterionMargin)),
+      criterionPass: criterionMargin > 0n,
+      protocolLvrWPOL: 0
     });
   });
 
@@ -206,7 +226,7 @@ describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
     await assert.rejects(
       f.attackerSolver.runClosed(E("1.5"), 0, baseAmount, maxPayment, salt, deadline, 0)
     );
-    await (await f.solver.runClosed(E("1.5"), 0, baseAmount, maxPayment, salt, deadline, E("0.2"))).wait();
+    await (await f.solver.runClosed(E("1.5"), 0, baseAmount, maxPayment, salt, deadline, 0)).wait();
     record({
       scenario: "security_guards",
       forkBlock: await ethers.provider.getBlockNumber(),

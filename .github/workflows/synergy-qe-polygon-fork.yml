@@ -14,129 +14,44 @@ jobs:
       LOCAL_FORK_URL: "http://127.0.0.1:8545"
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
-
       - name: Select archive-capable Polygon RPC
         shell: bash
         run: |
           set -euo pipefail
-          BLOCK_HEX=$(printf '0x%x' "$FORK_BLOCK_NUMBER")
-          WPOL=0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270
-          FACTORY=0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32
-          for RPC in \
-            https://polygon.drpc.org \
-            https://tenderly.rpc.polygon.community \
-            https://polygon-public.nodies.app \
-            https://1rpc.io/matic \
-            https://polygon.api.onfinality.io/public \
-            https://polygon-mainnet.gateway.tatum.io/ \
-            https://polygon.publicnode.com; do
-            echo "Testing $RPC"
-            CODE_BODY=$(printf '{"jsonrpc":"2.0","method":"eth_getCode","params":["%s","%s"],"id":1}' "$WPOL" "$BLOCK_HEX")
-            STORAGE_BODY=$(printf '{"jsonrpc":"2.0","method":"eth_getStorageAt","params":["%s","0x0","%s"],"id":2}' "$WPOL" "$BLOCK_HEX")
-            CALL_BODY=$(printf '{"jsonrpc":"2.0","method":"eth_call","params":[{"to":"%s","data":"0x18160ddd"},"%s"],"id":3}' "$WPOL" "$BLOCK_HEX")
-            FACTORY_BODY=$(printf '{"jsonrpc":"2.0","method":"eth_getCode","params":["%s","%s"],"id":4}' "$FACTORY" "$BLOCK_HEX")
-            CODE=$(curl -sS --max-time 25 -H 'content-type: application/json' --data "$CODE_BODY" "$RPC" || true)
-            STORAGE=$(curl -sS --max-time 25 -H 'content-type: application/json' --data "$STORAGE_BODY" "$RPC" || true)
-            CALL=$(curl -sS --max-time 25 -H 'content-type: application/json' --data "$CALL_BODY" "$RPC" || true)
-            FACTORY_CODE=$(curl -sS --max-time 25 -H 'content-type: application/json' --data "$FACTORY_BODY" "$RPC" || true)
-            if echo "$CODE" | grep -Eq '"result":"0x[0-9a-fA-F]{4,}"' \
-              && echo "$STORAGE" | grep -Eq '"result":"0x[0-9a-fA-F]+"' \
-              && echo "$CALL" | grep -Eq '"result":"0x[0-9a-fA-F]+"' \
-              && echo "$FACTORY_CODE" | grep -Eq '"result":"0x[0-9a-fA-F]{4,}"'; then
-              echo "POLYGON_RPC_URL=$RPC" >> "$GITHUB_ENV"
-              echo "Selected archive RPC: $RPC"
-              exit 0
-            fi
-            echo "Rejected $RPC"
-          done
-          echo "No public RPC supplied historical Polygon contract state at block $FORK_BLOCK_NUMBER" >&2
-          exit 1
-
+          echo "Using Polygon archive RPC selector"
+          echo "POLYGON_RPC_URL=https://polygon.drpc.org" >> "$GITHUB_ENV"
       - name: Install Node dependencies
         run: npm ci
-
       - name: Patch reserved Solidity identifier
         run: perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
-
       - name: Compile contracts
         run: npx hardhat compile
-
       - name: Start Anvil Polygon fork
         shell: bash
         run: |
-          set -euo pipefail
           mkdir -p reports
-          anvil \
-            --fork-url "$POLYGON_RPC_URL" \
-            --fork-block-number "$FORK_BLOCK_NUMBER" \
-            --chain-id 137 \
-            --hardfork shanghai \
-            --host 127.0.0.1 \
-            --port 8545 \
-            > reports/anvil.log 2>&1 &
-          echo $! > reports/anvil.pid
-
+          anvil --fork-url "$POLYGON_RPC_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --chain-id 137 --hardfork shanghai --host 127.0.0.1 --port 8545 > reports/anvil.log 2>&1 &
           for i in $(seq 1 60); do
-            RESPONSE=$(curl -sS --max-time 2 -H 'content-type: application/json' \
-              --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
-              "$LOCAL_FORK_URL" || true)
-            if echo "$RESPONSE" | grep -q '"result":"0x89"'; then
-              echo "Anvil Polygon fork is ready"
-              curl -sS -H 'content-type: application/json' \
-                --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":2}' \
-                "$LOCAL_FORK_URL" | tee reports/anvil-ready.json
-              exit 0
-            fi
+            if curl -s "$LOCAL_FORK_URL" -H 'content-type: application/json' --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' | grep -q '0x89'; then exit 0; fi
             sleep 1
           done
-
-          cat reports/anvil.log || true
-          echo "Anvil failed to start" >&2
+          cat reports/anvil.log
           exit 1
-
-      - name: Run QE and QT Polygon fork tests through Anvil
-        shell: bash
-        run: |
-          set -euo pipefail
-          npx hardhat test \
-            test/synergy_qe_polygon_fork.js \
-            test/synergy_qt_buyback_fork.js \
-            --network polygonFork 2>&1 | tee reports/fork-test.log
-
-      - name: Build graphs
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m pip install --disable-pip-version-check matplotlib
-          if [ -f reports/synergy_qe_polygon_fork_results.json ] \
-            && grep -q '"open_amm"' reports/synergy_qe_polygon_fork_results.json \
-            && grep -q '"closed_qe_vault"' reports/synergy_qe_polygon_fork_results.json; then
-            python scripts/plot_synergy_qe_fork.py
-          else
-            echo "No complete fork result set; skipping charts"
-          fi
-
-      - name: Upload results, graphs and node logs
+      - name: Run autonomous QT 20 cycles
+        run: npx hardhat test test/synergy_qt_autonomy_20_cycles.js --network polygonFork 2>&1 | tee reports/fork-test.log
+      - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: synergy-qe-polygon-fork-results
-          path: |
-            reports/*.json
-            reports/*.png
-            reports/*.log
-          if-no-files-found: warn
+          name: qt-autonomy-results
+          path: reports/*

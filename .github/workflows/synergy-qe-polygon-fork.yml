@@ -62,7 +62,7 @@ jobs:
             fi
             echo "Rejected $RPC"
           done
-          echo "No public RPC supplied historical Polygon state at block $FORK_BLOCK_NUMBER" >&2
+          echo "No public RPC supplied historical Polygon contract state at block $FORK_BLOCK_NUMBER" >&2
           exit 1
 
       - name: Install Node dependencies
@@ -107,11 +107,14 @@ jobs:
           echo "Anvil failed to start" >&2
           exit 1
 
-      - name: Run Polygon fork test through Anvil
+      - name: Run QE and QT Polygon fork tests through Anvil
         shell: bash
         run: |
           set -euo pipefail
-          npx hardhat test test/synergy_qe_polygon_fork.js --network polygonFork 2>&1 | tee reports/fork-test.log
+          npx hardhat test \
+            test/synergy_qe_polygon_fork.js \
+            test/synergy_qt_buyback_fork.js \
+            --network polygonFork 2>&1 | tee reports/fork-test.log
 
       - name: Build graphs
         if: always()

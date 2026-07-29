@@ -28,14 +28,15 @@ module.exports = {
   networks: {
     hardhat: {
       chainId: 31337,
-      hardfork: "cancun",
-      // Hardhat/EDR doesn't ship Polygon PoS hardfork history. The pinned
-      // 2026 Polygon state includes contracts whose state-changing paths can
-      // use Cancun opcodes, so execute the historical fork under Cancun.
+      hardfork: "shanghai",
+      // Hardhat/EDR doesn't ship a Polygon PoS activation history.
+      // The pinned fork state is executed under Shanghai; Cancun caused
+      // ExcessBlobGasNotSet because Polygon block headers don't expose
+      // Ethereum blob-gas fields.
       chains: {
         137: {
           hardforkHistory: {
-            cancun: 0
+            shanghai: 0
           }
         }
       },

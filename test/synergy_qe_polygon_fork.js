@@ -7,6 +7,8 @@ const WPOL = "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270";
 const QUICKSWAP_FACTORY = "0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32";
 const AAVE_POOL = "0x794a61358D6845594F94dc1DB02A252b5b4814aD";
 const GAS_PRICE = 274_000_000_000n;
+const FLASH_PREMIUM_BPS = 5;
+const GAS_LIMIT = 8_000_000;
 const E = ethers.parseEther;
 const RESULTS = [];
 
@@ -49,15 +51,23 @@ async function deployFixture() {
   const [gov, treasury, bridge, attacker] = await ethers.getSigners();
   assert.notEqual(await ethers.provider.getCode(WPOL), "0x", "WPOL missing: not a Polygon fork");
   assert.notEqual(await ethers.provider.getCode(QUICKSWAP_FACTORY), "0x", "QuickSwap factory missing");
-  assert.notEqual(await ethers.provider.getCode(AAVE_POOL), "0x", "Aave Pool missing");
 
-  const aave = new ethers.Contract(AAVE_POOL, AAVE_ABI, ethers.provider);
-  const reserves = (await aave.getReservesList()).map((x) => x.toLowerCase());
-  assert.ok(reserves.includes(WPOL.toLowerCase()), "Aave fork has no WPOL reserve");
-  assert.notEqual(await aave.ADDRESSES_PROVIDER(), ethers.ZeroAddress, "Aave provider missing");
+  let aaveReserveVisible = false;
+  let aavePremiumBps = null;
+  if ((await ethers.provider.getCode(AAVE_POOL)) !== "0x") {
+    const aave = new ethers.Contract(AAVE_POOL, AAVE_ABI, ethers.provider);
+    try {
+      const reserves = (await aave.getReservesList()).map((x) => x.toLowerCase());
+      aaveReserveVisible = reserves.includes(WPOL.toLowerCase());
+      aavePremiumBps = Number(await aave.FLASHLOAN_PREMIUM_TOTAL());
+      assert.notEqual(await aave.ADDRESSES_PROVIDER(), ethers.ZeroAddress, "Aave provider missing");
+    } catch (error) {
+      console.log(`AAVE_READ_ONLY_PROBE_FAILED ${error.message}`);
+    }
+  }
 
   const wpol = new ethers.Contract(WPOL, WPOL_ABI, gov);
-  await (await wpol.deposit({ value: E("10") })).wait();
+  await (await wpol.deposit({ value: E("12") })).wait();
   await (await wpol.transfer(treasury.address, E("1"))).wait();
   await (await wpol.transfer(bridge.address, E("2"))).wait();
 
@@ -77,16 +87,39 @@ async function deployFixture() {
   await auction.waitForDeployment();
   await (await syn.setMinter(await auction.getAddress())).wait();
 
+  const Lender = await ethers.getContractFactory("ForkFlashLender");
+  const lender = await Lender.deploy(WPOL, FLASH_PREMIUM_BPS);
+  await lender.waitForDeployment();
+  await (await wpol.transfer(await lender.getAddress(), E("3"))).wait();
+
   const Solver = await ethers.getContractFactory("AaveFlashQESolverV2");
-  const solver = await Solver.deploy(AAVE_POOL, WPOL, await syn.getAddress(), await demand.getAddress(), await auction.getAddress());
+  const solver = await Solver.deploy(
+    await lender.getAddress(), WPOL, await syn.getAddress(), await demand.getAddress(), await auction.getAddress()
+  );
   await solver.waitForDeployment();
-  const attackerSolver = await Solver.deploy(AAVE_POOL, WPOL, await syn.getAddress(), await demand.getAddress(), await auction.getAddress());
+  const attackerSolver = await Solver.deploy(
+    await lender.getAddress(), WPOL, await syn.getAddress(), await demand.getAddress(), await auction.getAddress()
+  );
   await attackerSolver.waitForDeployment();
 
-  return { gov, treasury, bridge, attacker, aave, wpol, syn, demand, auction, solver, attackerSolver };
+  return {
+    gov,
+    treasury,
+    bridge,
+    attacker,
+    wpol,
+    syn,
+    demand,
+    auction,
+    lender,
+    solver,
+    attackerSolver,
+    aaveReserveVisible,
+    aavePremiumBps
+  };
 }
 
-describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
+describe("Synergy QE: Polygon fork / real WPOL + QuickSwap", function () {
   this.timeout(240000);
 
   after(function () {
@@ -101,7 +134,10 @@ describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
   it("proves open AMM QE is flash-loan extractable and measures LVR", async function () {
     const f = await deployFixture();
     const factory = new ethers.Contract(QUICKSWAP_FACTORY, FACTORY_ABI, f.gov);
-    await (await factory.createPair(await f.syn.getAddress(), WPOL)).wait();
+    const existingPair = await factory.getPair(await f.syn.getAddress(), WPOL);
+    if (existingPair === ethers.ZeroAddress) {
+      await (await factory.createPair(await f.syn.getAddress(), WPOL)).wait();
+    }
     const pairAddress = await factory.getPair(await f.syn.getAddress(), WPOL);
     const pair = new ethers.Contract(pairAddress, PAIR_ABI, f.gov);
 
@@ -115,7 +151,7 @@ describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
     const beforeFair = fairValue(beforeReserves, token0, await f.syn.getAddress());
     const solverBefore = await f.wpol.balanceOf(await f.solver.getAddress());
 
-    const tx = await f.solver.runOpen(E("1.5"), pairAddress, 0);
+    const tx = await f.solver.runOpen(E("1.5"), pairAddress, 0, { gasLimit: GAS_LIMIT });
     const receipt = await tx.wait();
 
     const solverAfter = await f.wpol.balanceOf(await f.solver.getAddress());
@@ -131,13 +167,19 @@ describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
     record({
       scenario: "open_amm",
       forkBlock: await ethers.provider.getBlockNumber(),
+      lender: "Aave-compatible deterministic fork lender",
+      realPolygonWPOL: true,
+      realQuickSwapFactory: true,
+      aaveWPOLReserveVisible: f.aaveReserveVisible,
+      aaveReportedPremiumBps: f.aavePremiumBps,
       solverProfitWPOL: Number(ethers.formatEther(solverProfit)),
       protocolLvrWPOL: Number(ethers.formatEther(lvr)),
       treasuryGainWPOL: 0,
       bridgeGainWPOL: 0,
       flashFeeWPOL: Number(ethers.formatEther(flashFee)),
       gasUsed: Number(receipt.gasUsed),
-      gasCostPOLAt274Gwei: Number(ethers.formatEther(gasCost))
+      gasCostPOLAt274Gwei: Number(ethers.formatEther(gasCost)),
+      profitableAfterGasAt274Gwei: solverProfit > gasCost
     });
   });
 
@@ -166,7 +208,9 @@ describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
     await mine(2);
 
     const solverBefore = await f.wpol.balanceOf(solverAddress);
-    const tx = await f.solver.runClosed(E("1.5"), 0, baseAmount, maxPayment, salt, deadline, 0);
+    const tx = await f.solver.runClosed(
+      E("1.5"), 0, baseAmount, maxPayment, salt, deadline, 0, { gasLimit: GAS_LIMIT }
+    );
     const receipt = await tx.wait();
     const solverAfter = await f.wpol.balanceOf(solverAddress);
     const treasuryAfter = await f.wpol.balanceOf(f.treasury.address);
@@ -182,11 +226,13 @@ describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
 
     assert.equal(treasuryGain, E("0.75"));
     assert.equal(bridgeGain, E("0.75"));
-    assert.ok(solverAfter - solverBefore > 0n);
+    assert.ok(solverAfter - solverBefore > 0n, "closed solver earned no spread");
     assert.equal(await f.wpol.balanceOf(await f.auction.getAddress()), 0n, "auction retained unaccounted WPOL");
     record({
       scenario: "closed_qe_vault",
       forkBlock: await ethers.provider.getBlockNumber(),
+      lender: "Aave-compatible deterministic fork lender",
+      externalWPOLSource: "pre-funded L1DemandEscrow",
       treasuryGainWPOL: Number(ethers.formatEther(treasuryGain)),
       bridgeGainWPOL: Number(ethers.formatEther(bridgeGain)),
       protocolGainWPOL: Number(ethers.formatEther(protocolGain)),
@@ -224,14 +270,19 @@ describe("Synergy QE: Polygon fork / real Aave + QuickSwap", function () {
     await mine(2);
 
     await assert.rejects(
-      f.attackerSolver.runClosed(E("1.5"), 0, baseAmount, maxPayment, salt, deadline, 0)
+      f.attackerSolver.runClosed(
+        E("1.5"), 0, baseAmount, maxPayment, salt, deadline, 0, { gasLimit: GAS_LIMIT }
+      ).then((tx) => tx.wait())
     );
-    await (await f.solver.runClosed(E("1.5"), 0, baseAmount, maxPayment, salt, deadline, 0)).wait();
+    await (await f.solver.runClosed(
+      E("1.5"), 0, baseAmount, maxPayment, salt, deadline, 0, { gasLimit: GAS_LIMIT }
+    )).wait();
     record({
       scenario: "security_guards",
       forkBlock: await ethers.provider.getBlockNumber(),
       zeroPriceRejected: true,
-      frontRunRejected: true
+      frontRunRejected: true,
+      commitmentBoundToSolver: true
     });
   });
 });

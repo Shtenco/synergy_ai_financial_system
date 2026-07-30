@@ -8,8 +8,7 @@ interface IERC20QTLike {
     function approve(address spender, uint256 amount) external returns (bool);
 }
 
-/// @notice Test token with explicit burning. Existing supply is minted before the
-/// measurement baseline; the QT auction never mints new units.
+/// @notice Test token with explicit burning.
 contract ForkSynQTToken {
     string public constant name = "Synergy QT Fork SYN";
     string public constant symbol = "qtSYN";
@@ -72,15 +71,18 @@ contract ForkSynQTToken {
     }
 }
 
-/// @notice Represents externally funded buyback demand. SYN delivered by a
-/// solver is burned immediately, so the WPOL budget produces genuine QT.
+/// @notice Externally funded buyback demand. SYN delivered by a solver is
+/// burned immediately. The deploying controller may add new demand capacity,
+/// but capacity alone is useless unless matching WPOL has also been deposited.
 contract L1BuybackBurnEscrowQT {
     ForkSynQTToken public immutable syn;
     IERC20QTLike public immutable wpol;
     uint256 public immutable priceX18;
+    address public immutable replenisher;
     uint256 public remainingBase;
     uint256 public totalBurned;
 
+    error Unauthorized();
     error InvalidPrice();
     error DemandExceeded();
     error TransferFailed();
@@ -91,6 +93,7 @@ contract L1BuybackBurnEscrowQT {
         uint256 quotePaid,
         address indexed receiver
     );
+    event DemandCapacityIncreased(uint256 addedBase, uint256 newRemainingBase);
 
     constructor(
         ForkSynQTToken syn_,
@@ -102,7 +105,15 @@ contract L1BuybackBurnEscrowQT {
         syn = syn_;
         wpol = wpol_;
         priceX18 = priceX18_;
+        replenisher = msg.sender;
         remainingBase = maxBase_;
+    }
+
+    function increaseRemainingBase(uint256 amount) external {
+        if (msg.sender != replenisher) revert Unauthorized();
+        if (amount == 0) revert DemandExceeded();
+        remainingBase += amount;
+        emit DemandCapacityIncreased(amount, remainingBase);
     }
 
     function redeem(uint256 baseAmount, address receiver) external returns (uint256 quoteAmount) {
@@ -120,9 +131,9 @@ contract L1BuybackBurnEscrowQT {
     }
 }
 
-/// @notice Closed QT auction that sells only pre-existing protocol inventory.
-/// Opening a window cannot mint SYN; therefore every redemption through the
-/// buyback escrow reduces outstanding supply one-for-one.
+/// @notice Closed QT auction that sells only protocol inventory already held
+/// by this contract. New inventory may be added only by the controller's backed
+/// QE refill path; the auction itself can never mint.
 contract SynergyQTInventoryAuction {
     uint256 public constant BPS = 10_000;
     uint16 public constant MAX_QT_BPS = 5_000;

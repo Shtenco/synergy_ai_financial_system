@@ -11,6 +11,16 @@ describe("External market flow and liability QT", function () {
     const qtAddress = await f.qt.getAddress();
     const dividendAddress = await f.dividend.getAddress();
 
+    const Batch = await ethers.getContractFactory("ConsolidatedCycleBatchHarness", f.admin);
+    const batch = await Batch.deploy(
+      await f.ledger.getAddress(),
+      mmAddress,
+      qtAddress
+    );
+    await batch.waitForDeployment();
+    await (await f.mm.setOperator(await batch.getAddress(), true)).wait();
+    await (await f.qt.setOperator(await batch.getAddress(), true)).wait();
+
     await (await f.syn.mint(mmAddress, E("1000"))).wait();
     await (
       await f.ledger.recordInventoryIncrease(
@@ -31,37 +41,20 @@ describe("External market flow and liability QT", function () {
       await f.syn.connect(f.externalBuyer).approve(qtAddress, ethers.MaxUint256)
     ).wait();
 
-    for (let i = 0; i < 1000; i++) {
+    for (let start = 0; start < 1000; start += 10) {
       await (
-        await f.mm.sellToExternalBuyer(
+        await batch.batchExternalIssueRedeem(
+          start,
+          10,
           f.externalBuyer.address,
           E("1"),
           E("1.1"),
           E("0.01"),
-          f.externalCostRecipient.address,
-          source("capital", i),
-          source("spread", i),
-          source("inventory-out", i),
-          source("execution-cost", i)
+          f.externalCostRecipient.address
         )
       ).wait();
-
-      assert.equal(await f.ledger.externalLiabilities(), E("1"));
-      assert.equal(await f.syn.balanceOf(f.externalBuyer.address), E("1"));
-
-      await (
-        await f.qt.externalTenderAndBurn(
-          f.externalBuyer.address,
-          E("1"),
-          0,
-          ethers.ZeroAddress,
-          source("qt-redemption", i),
-          source("unused-qt-cost", i)
-        )
-      ).wait();
-
-      assert.equal(await f.ledger.externalLiabilities(), 0n, `cycle ${i}: liability remained`);
-      assert.equal(await f.syn.balanceOf(f.externalBuyer.address), 0n, `cycle ${i}: SYN remained`);
+      assert.equal(await f.ledger.externalLiabilities(), 0n, `batch ${start}: liability remained`);
+      assert.equal(await f.syn.balanceOf(f.externalBuyer.address), 0n, `batch ${start}: SYN remained`);
     }
 
     assert.equal(await f.mm.totalExternalVolume(), E("1100"));

@@ -11,9 +11,13 @@ PATHS = 1000
 BLOCKS = 20_000
 NORMAL_SOLVENCY = 1.20
 DEFENSIVE_SOLVENCY = 1.05
+NORMAL_LIQUIDITY = 1.20
+LIQUIDITY_ACTION_BUFFER = 1.205
 MIN_GAS_COVERAGE = 1.20
+GAS_ACTION_BUFFER = 1.2005
 MIN_POLICY_RATIO = 0.70
 MIN_POOL_DEPTH = 25.0
+BASE_STRESSED_OUTFLOWS = 45.0
 
 
 def safe_ratio(numerator: np.ndarray, denominator: np.ndarray) -> np.ndarray:
@@ -41,11 +45,11 @@ def main() -> None:
     external_syn_liability = np.full(n, 70.0)
     external_synr_claims = np.full(n, 20.0)
     vested_mev_claims = np.full(n, 5.0)
-    fixed_other_liabilities = np.full(n, 5.0)  # bridge, keeper and operating costs.
+    fixed_other_liabilities = np.full(n, 5.0)
     redemption_shock = np.zeros(n)
 
     immediate_liquid = np.full(n, 75.0)
-    stressed_outflows = np.full(n, 45.0)
+    stressed_outflows = np.full(n, BASE_STRESSED_OUTFLOWS)
     reimbursed_gas = np.full(n, 30.0)
     reserve_policy_capital = np.full(n, 105.0)
     conservative_obligations = np.full(n, 140.0)
@@ -108,6 +112,7 @@ def main() -> None:
         slippage = 0.0008 * user_volume * (1.0 + np.maximum(0.0, rng.normal(0.0, 0.45, n)))
         adverse = 0.00035 * user_volume * np.maximum(0.0, rng.normal(1.0, 0.40, n))
         costs = gas_cost + slippage + adverse
+        net_candidate = gross - costs
 
         a = assets()
         l = liabilities()
@@ -115,17 +120,35 @@ def main() -> None:
         lc = safe_ratio(immediate_liquid, stressed_outflows)
         gc = safe_ratio(reimbursed_gas + gas_reserve, reimbursed_gas)
         pr = safe_ratio(reserve_policy_capital, conservative_obligations)
-        opportunity = gross > costs + 0.0001
+        opportunity = net_candidate > 0.0001
+
+        projected_reimbursed = reimbursed_gas + gas_cost
+        projected_gas_reserve = gas_reserve + 0.20 * net_candidate
+        projected_gc = safe_ratio(
+            projected_reimbursed + projected_gas_reserve,
+            projected_reimbursed,
+        )
+        projected_lc = safe_ratio(
+            immediate_liquid + 0.70 * net_candidate,
+            stressed_outflows,
+        )
+        projected_safe = (
+            (projected_gc >= GAS_ACTION_BUFFER)
+            & (projected_lc >= NORMAL_LIQUIDITY)
+        )
+
         normal = (
             opportunity
+            & projected_safe
             & (sr >= NORMAL_SOLVENCY)
-            & (lc >= NORMAL_SOLVENCY)
+            & (lc >= NORMAL_LIQUIDITY)
             & (gc >= MIN_GAS_COVERAGE)
             & (pr >= MIN_POLICY_RATIO)
             & (pool_depth >= MIN_POOL_DEPTH)
         )
         defensive = (
             opportunity
+            & projected_safe
             & ~normal
             & (sr >= DEFENSIVE_SOLVENCY)
             & (lc >= DEFENSIVE_SOLVENCY)
@@ -135,7 +158,7 @@ def main() -> None:
         pauses += (~execute).astype(np.int64)
         gas_skips += (opportunity & ~execute).astype(np.int64)
 
-        net = np.where(execute, gross - costs, 0.0)
+        net = np.where(execute, net_candidate, 0.0)
         external_revenue += np.where(execute, gross, 0.0)
         external_cost += np.where(execute, costs, 0.0)
         realized_pnl += net
@@ -158,19 +181,24 @@ def main() -> None:
         if block % 50 == 0:
             shock_fraction = np.maximum(0.0, rng.normal(0.08, 0.04, n))
             redemption_shock = shock_fraction * (external_syn_liability + external_synr_claims)
-            stressed_outflows = np.maximum(20.0, 45.0 + redemption_shock)
         if block % 200 == 0:
             redemption_shock *= 0.50
+        if block % 50 == 0:
+            stressed_outflows = np.maximum(BASE_STRESSED_OUTFLOWS, BASE_STRESSED_OUTFLOWS + redemption_shock)
 
         if block % 500 == 0:
             required = NORMAL_SOLVENCY * liabilities() + 11.0
             excess = np.maximum(0.0, liquid - required)
-            qe = np.where(normal, np.minimum(0.10 * excess, 5.0), 0.0)
+            liquidity_slack = np.maximum(
+                0.0,
+                immediate_liquid - LIQUIDITY_ACTION_BUFFER * stressed_outflows,
+            )
+            qe = np.where(normal, np.minimum(np.minimum(0.10 * excess, 5.0), liquidity_slack), 0.0)
             liquid -= qe
             stable_lp += 0.50 * qe
             bridge += 0.25 * qe
             insurance += 0.25 * qe
-            immediate_liquid = np.maximum(0.0, immediate_liquid - qe)
+            immediate_liquid -= qe
             internal_transfers += qe
 
         if block % 1000 == 0:
@@ -180,9 +208,17 @@ def main() -> None:
             capacity = np.minimum(realized_bound, nav_bound)
             required = NORMAL_SOLVENCY * liabilities() + 11.0
             cash_bound = np.maximum(0.0, liquid - required)
-            dividend = np.where(normal, np.minimum(0.10 * capacity, cash_bound), 0.0)
+            liquidity_slack = np.maximum(
+                0.0,
+                immediate_liquid - LIQUIDITY_ACTION_BUFFER * stressed_outflows,
+            )
+            dividend = np.where(
+                normal,
+                np.minimum(np.minimum(0.10 * capacity, cash_bound), liquidity_slack),
+                0.0,
+            )
             liquid -= dividend
-            immediate_liquid = np.maximum(0.0, immediate_liquid - dividend)
+            immediate_liquid -= dividend
             dividends += dividend
 
         current_assets = assets()
@@ -202,27 +238,26 @@ def main() -> None:
         )
         insolvency |= current_sr < 1.0
 
-    rows = []
-    for i in range(n):
-        rows.append(
-            {
-                "path": i,
-                "minimum_solvency_ratio": float(minimum_solvency[i]),
-                "minimum_liquidity_coverage": float(minimum_liquidity[i]),
-                "minimum_gas_coverage": float(minimum_gas[i]),
-                "maximum_drawdown": float(maximum_drawdown[i]),
-                "external_realized_pnl": float(realized_pnl[i]),
-                "internal_transfer_volume": float(internal_transfers[i]),
-                "total_dividends": float(dividends[i]),
-                "external_liabilities": float(external_syn_liability[i]),
-                "protocol_inventory": float(protocol_inventory[i]),
-                "minimum_pool_depth": float(minimum_pool_depth[i]),
-                "useful_actions": int(useful_actions[i]),
-                "gas_skips": int(gas_skips[i]),
-                "pauses": int(pauses[i]),
-                "insolvent": bool(insolvency[i]),
-            }
-        )
+    rows = [
+        {
+            "path": i,
+            "minimum_solvency_ratio": float(minimum_solvency[i]),
+            "minimum_liquidity_coverage": float(minimum_liquidity[i]),
+            "minimum_gas_coverage": float(minimum_gas[i]),
+            "maximum_drawdown": float(maximum_drawdown[i]),
+            "external_realized_pnl": float(realized_pnl[i]),
+            "internal_transfer_volume": float(internal_transfers[i]),
+            "total_dividends": float(dividends[i]),
+            "external_liabilities": float(external_syn_liability[i]),
+            "protocol_inventory": float(protocol_inventory[i]),
+            "minimum_pool_depth": float(minimum_pool_depth[i]),
+            "useful_actions": int(useful_actions[i]),
+            "gas_skips": int(gas_skips[i]),
+            "pauses": int(pauses[i]),
+            "insolvent": bool(insolvency[i]),
+        }
+        for i in range(n)
+    ]
 
     out = Path("reports")
     out.mkdir(parents=True, exist_ok=True)

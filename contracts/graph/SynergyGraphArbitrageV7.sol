@@ -11,6 +11,7 @@ interface IParticipantRegistryV7 {
 
 interface ISynergyFactoryV7 {
     function getPair(address tokenA, address tokenB) external view returns (address);
+    function allPairsLength() external view returns (uint256);
 }
 
 interface IQuickSwapFactoryV7 {
@@ -43,8 +44,9 @@ interface IQuickSwapPositionManagerV7 {
         returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
 }
 
-/// @notice Representative SYNA: the public pool can only touch the protected gateway
-/// or explicitly trusted infrastructure. Wallet-to-wallet transfers are forbidden.
+/// @notice Representative SYNA: the public pool can only touch the protected
+/// gateway or explicitly trusted infrastructure. Wallet-to-wallet transfers
+/// are forbidden.
 contract SynergyRepresentativeTokenV7 is ERC20 {
     address public immutable engine;
     address public protectedGateway;
@@ -97,7 +99,11 @@ contract SynergyRepresentativeTokenV7 is ERC20 {
                     revert RestrictedTransfer();
                 }
             } else if (internalTouch) {
-                if (!infrastructure[msg.sender] && !infrastructure[from] && !infrastructure[to]) {
+                if (
+                    !infrastructure[msg.sender] &&
+                    !infrastructure[from] &&
+                    !infrastructure[to]
+                ) {
                     revert RestrictedTransfer();
                 }
             } else if (!infrastructure[from] && !infrastructure[to]) {
@@ -142,13 +148,18 @@ contract SynergyInternalReserveTokenV7 is ERC20 {
     }
 }
 
-/// @notice Exact topology: three internal SINERGY pools and one public QuickSwap WPOL/SYNA.
+/// @notice Strict topology:
+/// - six internal permissioned SINERGY pools, the complete graph over
+///   WPOL, USDT, SYNA and SYNR;
+/// - one public QuickSwap V3 representative pool, WPOL/SYNA only.
 contract SynergyTopologyV7 {
     using SafeERC20 for IERC20;
 
     uint256 public constant BPS = 10_000;
+    uint256 public constant INTERNAL_POOL_COUNT = 6;
     uint256 public constant MIN_POSITION_BPS = 9_700;
-    uint160 public constant SQRT_PRICE_X96_ONE = 79228162514264337593543950336;
+    uint160 public constant SQRT_PRICE_X96_ONE =
+        79228162514264337593543950336;
 
     IERC20 public immutable wpol;
     IERC20 public immutable usdt;
@@ -163,6 +174,10 @@ contract SynergyTopologyV7 {
     address public internalPolSyna;
     address public internalPolSynr;
     address public internalSynaSynr;
+    address public internalPolUsdt;
+    address public internalUsdtSyna;
+    address public internalUsdtSynr;
+
     address public publicQuickSwapPolSyna;
     uint256 public publicPositionId;
     uint256 public externalCapitalPol;
@@ -175,8 +190,19 @@ contract SynergyTopologyV7 {
     error Ineligible();
     error AlreadyConfigured();
 
-    event InternalTopologyConfigured(address polSyna, address polSynr, address synaSynr);
-    event PublicRepresentativePoolCreated(address pool, uint256 positionId, uint256 polAmount);
+    event InternalTopologyConfigured(
+        address polSyna,
+        address polSynr,
+        address synaSynr,
+        address polUsdt,
+        address usdtSyna,
+        address usdtSynr
+    );
+    event PublicRepresentativePoolCreated(
+        address pool,
+        uint256 positionId,
+        uint256 polAmount
+    );
     event QEAllocated(uint256 notionalPol);
     event QTRecorded(uint256 externalLiabilityBurnPol);
 
@@ -189,9 +215,14 @@ contract SynergyTopologyV7 {
         address positionManager_
     ) {
         if (
-            wpol_ == address(0) || usdt_ == address(0) || participantRegistry_ == address(0) ||
-            internalFactory_ == address(0) || quickSwapFactory_ == address(0) || positionManager_ == address(0)
+            wpol_ == address(0) ||
+            usdt_ == address(0) ||
+            participantRegistry_ == address(0) ||
+            internalFactory_ == address(0) ||
+            quickSwapFactory_ == address(0) ||
+            positionManager_ == address(0)
         ) revert InvalidAddress();
+
         admin = msg.sender;
         wpol = IERC20(wpol_);
         usdt = IERC20(usdt_);
@@ -209,43 +240,106 @@ contract SynergyTopologyV7 {
         _;
     }
 
-    function configureInternalTopology(address internalRouter) external onlyAdmin {
+    function configureInternalTopology(address internalRouter)
+        external
+        onlyAdmin
+    {
         if (internalPolSyna != address(0)) revert AlreadyConfigured();
+        if (
+            internalRouter == address(0) ||
+            internalRouter.code.length == 0 ||
+            internalFactory.allPairsLength() != INTERNAL_POOL_COUNT
+        ) revert InvalidTopology();
+
         address ps = internalFactory.getPair(address(wpol), address(syna));
         address pr = internalFactory.getPair(address(wpol), address(synr));
         address sr = internalFactory.getPair(address(syna), address(synr));
-        if (ps == address(0) || pr == address(0) || sr == address(0)) revert InvalidTopology();
+        address pu = internalFactory.getPair(address(wpol), address(usdt));
+        address us = internalFactory.getPair(address(usdt), address(syna));
+        address ur = internalFactory.getPair(address(usdt), address(synr));
+
+        address[6] memory pools = [ps, pr, sr, pu, us, ur];
+        for (uint256 i; i < pools.length; ++i) {
+            if (pools[i] == address(0) || pools[i].code.length == 0) {
+                revert InvalidTopology();
+            }
+            for (uint256 j; j < i; ++j) {
+                if (pools[i] == pools[j]) revert InvalidTopology();
+            }
+        }
+
         internalPolSyna = ps;
         internalPolSynr = pr;
         internalSynaSynr = sr;
+        internalPolUsdt = pu;
+        internalUsdtSyna = us;
+        internalUsdtSynr = ur;
+
         syna.setInternalPair(ps, true);
         syna.setInternalPair(sr, true);
+        syna.setInternalPair(us, true);
         syna.setInfrastructure(internalRouter, true);
+
         synr.setInternalEndpoint(pr, true);
         synr.setInternalEndpoint(sr, true);
+        synr.setInternalEndpoint(ur, true);
         synr.setInternalEndpoint(internalRouter, true);
-        emit InternalTopologyConfigured(ps, pr, sr);
+
+        emit InternalTopologyConfigured(ps, pr, sr, pu, us, ur);
+    }
+
+    function internalPools()
+        external
+        view
+        returns (address[6] memory pools)
+    {
+        pools = [
+            internalPolSyna,
+            internalPolSynr,
+            internalSynaSynr,
+            internalPolUsdt,
+            internalUsdtSyna,
+            internalUsdtSynr
+        ];
     }
 
     function setProtectedGateway(address gateway) external onlyAdmin {
         syna.configureGateway(gateway);
     }
 
-    /// @dev Creates only public WPOL/SYNA. Local-token WPOL/SYNR and SYNA/SYNR
-    /// must stay absent from QuickSwap and remain internal SINERGY DEX pairs.
+    /// @dev Creates only public WPOL/SYNA. All other local-token pairs must stay
+    /// absent from QuickSwap and remain internal SINERGY DEX pairs. Public
+    /// QuickSwap WPOL/USDT is allowed only as independent external liquidity.
     function createPublicRepresentativePool(uint256 polAmount)
         external
         onlyAdmin
         returns (address pool, uint256 tokenId)
     {
-        if (publicQuickSwapPolSyna != address(0) || polAmount == 0) revert InvalidTopology();
+        if (
+            publicQuickSwapPolSyna != address(0) ||
+            polAmount == 0 ||
+            internalPolSyna == address(0) ||
+            syna.protectedGateway() == address(0)
+        ) revert InvalidTopology();
         if (!participantRegistry.isEligible(msg.sender)) revert Ineligible();
+
         wpol.safeTransferFrom(msg.sender, address(this), polAmount);
         syna.mint(address(this), polAmount);
 
-        address token0 = address(wpol) < address(syna) ? address(wpol) : address(syna);
-        address token1 = address(wpol) < address(syna) ? address(syna) : address(wpol);
-        pool = positionManager.createAndInitializePoolIfNecessary(token0, token1, SQRT_PRICE_X96_ONE);
+        address token0 =
+            address(wpol) < address(syna) ? address(wpol) : address(syna);
+        address token1 =
+            address(wpol) < address(syna) ? address(syna) : address(wpol);
+
+        pool = positionManager.createAndInitializePoolIfNecessary(
+            token0,
+            token1,
+            SQRT_PRICE_X96_ONE
+        );
+        if (pool == address(0) || pool.code.length == 0) {
+            revert InvalidTopology();
+        }
+
         syna.setPublicPool(pool, true);
         IERC20(address(wpol)).forceApprove(address(positionManager), polAmount);
         IERC20(address(syna)).forceApprove(address(positionManager), polAmount);
@@ -267,15 +361,25 @@ contract SynergyTopologyV7 {
                 deadline: block.timestamp + 300
             })
         );
-        liquidity; used0; used1;
+        if (liquidity == 0 || used0 == 0 || used1 == 0) {
+            revert InvalidTopology();
+        }
+
         publicQuickSwapPolSyna = pool;
         publicPositionId = tokenId;
         externalCapitalPol += polAmount;
 
         if (
-            quickSwapFactory.poolByPair(address(wpol), address(synr)) != address(0) ||
-            quickSwapFactory.poolByPair(address(syna), address(synr)) != address(0)
+            quickSwapFactory.poolByPair(address(wpol), address(synr)) !=
+                address(0) ||
+            quickSwapFactory.poolByPair(address(syna), address(synr)) !=
+                address(0) ||
+            quickSwapFactory.poolByPair(address(usdt), address(syna)) !=
+                address(0) ||
+            quickSwapFactory.poolByPair(address(usdt), address(synr)) !=
+                address(0)
         ) revert InvalidTopology();
+
         emit PublicRepresentativePoolCreated(pool, tokenId, polAmount);
     }
 
@@ -291,7 +395,12 @@ contract SynergyTopologyV7 {
 }
 
 contract ExternalExitPoolRegistryV7 {
-    enum PoolKind { QUICKSWAP_V2, QUICKSWAP_V3, OTHER }
+    enum PoolKind {
+        QUICKSWAP_V2,
+        QUICKSWAP_V3,
+        OTHER
+    }
+
     struct ExitPool {
         address pool;
         address token0;
@@ -311,7 +420,10 @@ contract ExternalExitPoolRegistryV7 {
     error Unauthorized();
     error InvalidPool();
 
+    event ExitPoolWhitelisted(address indexed pool, PoolKind kind);
+
     constructor(address wpol_, address usdt_) {
+        if (wpol_ == address(0) || usdt_ == address(0)) revert InvalidPool();
         admin = msg.sender;
         wpol = wpol_;
         usdt = usdt_;
@@ -327,16 +439,39 @@ contract ExternalExitPoolRegistryV7 {
     ) external {
         if (msg.sender != admin) revert Unauthorized();
         bool correctPair =
-            (token0 == wpol && token1 == usdt) || (token0 == usdt && token1 == wpol);
-        if (!correctPair || pool == address(0) || pool.code.length == 0) revert InvalidPool();
-        exitPool[pool] = ExitPool(pool, token0, token1, kind, minimum0, minimum1, true);
+            (token0 == wpol && token1 == usdt) ||
+            (token0 == usdt && token1 == wpol);
+        if (
+            !correctPair ||
+            pool == address(0) ||
+            pool.code.length == 0 ||
+            minimum0 == 0 ||
+            minimum1 == 0 ||
+            kind == PoolKind.OTHER ||
+            exitPool[pool].enabled
+        ) revert InvalidPool();
+
+        exitPool[pool] = ExitPool(
+            pool,
+            token0,
+            token1,
+            kind,
+            minimum0,
+            minimum1,
+            true
+        );
         allExitPools.push(pool);
+        emit ExitPoolWhitelisted(pool, kind);
     }
 
     function validate(address pool) public view returns (bool) {
-        ExitPool memory p = exitPool[pool];
-        return p.enabled && IERC20(p.token0).balanceOf(pool) >= p.minimumToken0Balance &&
-            IERC20(p.token1).balanceOf(pool) >= p.minimumToken1Balance;
+        ExitPool memory candidate = exitPool[pool];
+        return
+            candidate.enabled &&
+            IERC20(candidate.token0).balanceOf(pool) >=
+            candidate.minimumToken0Balance &&
+            IERC20(candidate.token1).balanceOf(pool) >=
+            candidate.minimumToken1Balance;
     }
 
     function count() external view returns (uint256) {
@@ -352,11 +487,17 @@ contract SynergyGraphProfitGateV7 {
     address public immutable wpol;
     address public immutable usdt;
     address public admin;
+
     mapping(address => bool) public keeper;
     mapping(address => bool) public internalPool;
     mapping(address => bool) public publicRepresentativePool;
     mapping(bytes32 => uint64) public committedAtBlock;
+    mapping(bytes32 => address) public committedBy;
     mapping(bytes32 => bool) public consumed;
+
+    address[6] public configuredInternalPools;
+    bool public internalPoolsLocked;
+    bool public publicRepresentativeLocked;
 
     struct CycleProof {
         address settlementAsset;
@@ -369,6 +510,7 @@ contract SynergyGraphProfitGateV7 {
         uint256 internalValueLoss;
         uint256 qeNotional;
         uint256 qtExternalBurn;
+        uint256 deadline;
         address[] pools;
         bool[] externalEdge;
     }
@@ -377,13 +519,37 @@ contract SynergyGraphProfitGateV7 {
     error Ineligible();
     error InvalidRoute();
     error TooEarly();
+    error Expired();
     error NoExternalProfit();
     error QERevenueForbidden();
 
-    event CycleCommitted(bytes32 indexed routeHash, address indexed keeper, uint64 blockNumber);
-    event CycleAccepted(bytes32 indexed routeHash, uint256 externalNetProfit, uint256 qeNotional, uint256 qtBurn);
+    event InternalPoolsConfigured(address[6] pools);
+    event PublicRepresentativeConfigured(address indexed pool);
+    event CycleCommitted(
+        bytes32 indexed routeHash,
+        address indexed keeper,
+        uint64 blockNumber
+    );
+    event CycleAccepted(
+        bytes32 indexed routeHash,
+        uint256 externalNetProfit,
+        uint256 qeNotional,
+        uint256 qtBurn
+    );
 
-    constructor(address registry_, address exits_, address wpol_, address usdt_) {
+    constructor(
+        address registry_,
+        address exits_,
+        address wpol_,
+        address usdt_
+    ) {
+        if (
+            registry_ == address(0) ||
+            exits_ == address(0) ||
+            wpol_ == address(0) ||
+            usdt_ == address(0)
+        ) revert InvalidRoute();
+
         registry = IParticipantRegistryV7(registry_);
         exits = ExternalExitPoolRegistryV7(exits_);
         wpol = wpol_;
@@ -394,88 +560,199 @@ contract SynergyGraphProfitGateV7 {
 
     function setKeeper(address account, bool enabled) external {
         if (msg.sender != admin) revert Unauthorized();
+        if (account == address(0)) revert InvalidRoute();
         keeper[account] = enabled;
     }
 
-    function setInternalPool(address pool, bool enabled) external {
+    function configureInternalPools(address[6] calldata pools) external {
         if (msg.sender != admin) revert Unauthorized();
-        internalPool[pool] = enabled;
+        if (internalPoolsLocked) revert InvalidRoute();
+
+        for (uint256 i; i < pools.length; ++i) {
+            if (pools[i] == address(0) || pools[i].code.length == 0) {
+                revert InvalidRoute();
+            }
+            for (uint256 j; j < i; ++j) {
+                if (pools[i] == pools[j]) revert InvalidRoute();
+            }
+            configuredInternalPools[i] = pools[i];
+            internalPool[pools[i]] = true;
+        }
+
+        internalPoolsLocked = true;
+        emit InternalPoolsConfigured(pools);
     }
 
     function setPublicRepresentativePool(address pool, bool enabled) external {
         if (msg.sender != admin) revert Unauthorized();
-        publicRepresentativePool[pool] = enabled;
+        if (
+            publicRepresentativeLocked ||
+            !enabled ||
+            pool == address(0) ||
+            pool.code.length == 0
+        ) revert InvalidRoute();
+
+        publicRepresentativePool[pool] = true;
+        publicRepresentativeLocked = true;
+        emit PublicRepresentativeConfigured(pool);
     }
 
-    function hashProof(CycleProof calldata proof, uint256 nonce, bytes32 salt)
-        public
-        view
-        returns (bytes32)
-    {
-        return keccak256(abi.encode(block.chainid, address(this), msg.sender, proof, nonce, salt));
+    function hashProof(
+        CycleProof calldata proof,
+        uint256 nonce,
+        bytes32 salt
+    ) public view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                block.chainid,
+                address(this),
+                msg.sender,
+                proof,
+                nonce,
+                salt
+            )
+        );
     }
 
     function commit(bytes32 routeHash) external {
-        if (!keeper[msg.sender] || !registry.isEligible(msg.sender)) revert Ineligible();
+        if (!keeper[msg.sender] || !registry.isEligible(msg.sender)) {
+            revert Ineligible();
+        }
+        if (
+            routeHash == bytes32(0) ||
+            committedAtBlock[routeHash] != 0 ||
+            consumed[routeHash]
+        ) revert InvalidRoute();
+
         committedAtBlock[routeHash] = uint64(block.number);
+        committedBy[routeHash] = msg.sender;
         emit CycleCommitted(routeHash, msg.sender, uint64(block.number));
     }
 
-    function revealAndAccept(CycleProof calldata proof, uint256 nonce, bytes32 salt)
-        external
-        returns (uint256 externalNetProfit)
-    {
-        if (!keeper[msg.sender] || !registry.isEligible(msg.sender)) revert Ineligible();
+    function revealAndAccept(
+        CycleProof calldata proof,
+        uint256 nonce,
+        bytes32 salt
+    ) external returns (uint256 externalNetProfit) {
+        if (!keeper[msg.sender] || !registry.isEligible(msg.sender)) {
+            revert Ineligible();
+        }
+
         bytes32 routeHash = hashProof(proof, nonce, salt);
         uint64 committed = committedAtBlock[routeHash];
-        if (committed == 0 || block.number <= committed) revert TooEarly();
+        if (
+            committed == 0 ||
+            committedBy[routeHash] != msg.sender ||
+            block.number <= committed
+        ) revert TooEarly();
         if (consumed[routeHash]) revert InvalidRoute();
-        if (proof.settlementAsset != wpol && proof.settlementAsset != usdt) revert InvalidRoute();
-        if (proof.pools.length < 2 || proof.pools.length != proof.externalEdge.length) revert InvalidRoute();
+        if (block.timestamp > proof.deadline) revert Expired();
+        if (
+            proof.settlementAsset != wpol &&
+            proof.settlementAsset != usdt
+        ) revert InvalidRoute();
+        if (
+            proof.amountIn == 0 ||
+            proof.amountOut == 0 ||
+            proof.pools.length < 2 ||
+            proof.pools.length > 12 ||
+            proof.pools.length != proof.externalEdge.length
+        ) revert InvalidRoute();
 
         bool hasInternal;
         bool hasExternal;
         for (uint256 i; i < proof.pools.length; ++i) {
+            address pool = proof.pools[i];
+            if (pool == address(0)) revert InvalidRoute();
+
+            for (uint256 j; j < i; ++j) {
+                if (proof.pools[j] == pool) revert InvalidRoute();
+            }
+
             if (proof.externalEdge[i]) {
-                if (!exits.validate(proof.pools[i]) && !publicRepresentativePool[proof.pools[i]]) {
-                    revert InvalidRoute();
-                }
+                if (
+                    !exits.validate(pool) &&
+                    !publicRepresentativePool[pool]
+                ) revert InvalidRoute();
                 hasExternal = true;
             } else {
-                if (!internalPool[proof.pools[i]]) revert InvalidRoute();
+                if (!internalPool[pool]) revert InvalidRoute();
                 hasInternal = true;
             }
         }
         if (!hasInternal || !hasExternal) revert InvalidRoute();
 
-        uint256 costs = proof.gasCost + proof.poolFees + proof.slippageCost +
-            proof.flashPremium + proof.internalValueLoss;
-        if (proof.amountOut <= proof.amountIn + costs) revert NoExternalProfit();
+        uint256 costs =
+            proof.gasCost +
+            proof.poolFees +
+            proof.slippageCost +
+            proof.flashPremium +
+            proof.internalValueLoss;
+        if (proof.amountOut <= proof.amountIn + costs) {
+            revert NoExternalProfit();
+        }
+
         externalNetProfit = proof.amountOut - proof.amountIn - costs;
-        if (proof.qeNotional > 0 && proof.internalValueLoss == 0) revert QERevenueForbidden();
-        if (proof.qtExternalBurn > externalNetProfit) revert InvalidRoute();
+        if (proof.qeNotional > 0 && proof.internalValueLoss == 0) {
+            revert QERevenueForbidden();
+        }
+        if (proof.qtExternalBurn > externalNetProfit) {
+            revert InvalidRoute();
+        }
 
         consumed[routeHash] = true;
-        emit CycleAccepted(routeHash, externalNetProfit, proof.qeNotional, proof.qtExternalBurn);
+        emit CycleAccepted(
+            routeHash,
+            externalNetProfit,
+            proof.qeNotional,
+            proof.qtExternalBurn
+        );
     }
 }
 
-/// @notice Enforceable public-edge controls: commit-reveal, non-zero minOut and
-/// router quote, oracle deviation bound, deadline and sandwich-loss cap.
+/// @notice Enforceable public-edge controls: owner-bound commit-reveal,
+/// non-zero minOut/router/oracle/post-trade quotes, finite deadline, strict
+/// oracle-deviation cap and strict sandwich-loss cap.
 contract PublicRepresentativeProtectionV7 {
     uint256 public constant BPS = 10_000;
+    uint256 public constant MAX_ORACLE_DEVIATION_BPS = 300;
+    uint256 public constant MAX_SANDWICH_LOSS_BPS = 100;
+    uint256 public constant MAX_DEADLINE_WINDOW = 15 minutes;
+
+    address public immutable tokenA;
+    address public immutable tokenB;
     uint64 public immutable minimumDelayBlocks;
-    mapping(bytes32 => uint64) public committedAt;
-    mapping(bytes32 => bool) public consumed;
+
+    struct Commitment {
+        address owner;
+        uint64 blockNumber;
+        bool consumed;
+    }
+
+    mapping(bytes32 => Commitment) public commitment;
 
     error InvalidOrder();
     error TooEarly();
+    error Expired();
+    error UnauthorizedCommitter();
     error ZeroRouterQuote();
     error QuoteDeviation();
     error SandwichBound();
 
-    constructor(uint64 minimumDelayBlocks_) {
-        if (minimumDelayBlocks_ == 0) revert InvalidOrder();
+    constructor(
+        address tokenA_,
+        address tokenB_,
+        uint64 minimumDelayBlocks_
+    ) {
+        if (
+            tokenA_ == address(0) ||
+            tokenB_ == address(0) ||
+            tokenA_ == tokenB_ ||
+            minimumDelayBlocks_ == 0
+        ) revert InvalidOrder();
+
+        tokenA = tokenA_;
+        tokenB = tokenB_;
         minimumDelayBlocks = minimumDelayBlocks_;
     }
 
@@ -492,26 +769,40 @@ contract PublicRepresentativeProtectionV7 {
         uint256 nonce,
         bytes32 salt
     ) public view returns (bytes32) {
-        return keccak256(abi.encode(
-            block.chainid,
-            address(this),
-            owner,
-            tokenIn,
-            tokenOut,
-            amountIn,
-            minOut,
-            oracleOut,
-            maxDeviationBps,
-            maxSandwichLossBps,
-            deadline,
-            nonce,
-            salt
-        ));
+        if (!_isRepresentativePair(tokenIn, tokenOut)) {
+            revert InvalidOrder();
+        }
+
+        return keccak256(
+            abi.encode(
+                block.chainid,
+                address(this),
+                owner,
+                tokenIn,
+                tokenOut,
+                amountIn,
+                minOut,
+                oracleOut,
+                maxDeviationBps,
+                maxSandwichLossBps,
+                deadline,
+                nonce,
+                salt
+            )
+        );
     }
 
     function commit(bytes32 orderHash) external {
-        if (orderHash == bytes32(0)) revert InvalidOrder();
-        committedAt[orderHash] = uint64(block.number);
+        if (
+            orderHash == bytes32(0) ||
+            commitment[orderHash].owner != address(0)
+        ) revert InvalidOrder();
+
+        commitment[orderHash] = Commitment({
+            owner: msg.sender,
+            blockNumber: uint64(block.number),
+            consumed: false
+        });
     }
 
     function revealValidate(
@@ -528,8 +819,23 @@ contract PublicRepresentativeProtectionV7 {
         uint256 nonce,
         bytes32 salt
     ) external returns (bytes32 orderHash) {
-        if (minOut == 0 || amountIn == 0 || block.timestamp > deadline) revert InvalidOrder();
-        if (routerOut == 0 || oracleOut == 0 || postTradeQuote == 0) revert ZeroRouterQuote();
+        if (
+            !_isRepresentativePair(tokenIn, tokenOut) ||
+            minOut == 0 ||
+            amountIn == 0
+        ) revert InvalidOrder();
+        if (
+            block.timestamp > deadline ||
+            deadline > block.timestamp + MAX_DEADLINE_WINDOW
+        ) revert Expired();
+        if (routerOut == 0 || oracleOut == 0 || postTradeQuote == 0) {
+            revert ZeroRouterQuote();
+        }
+        if (
+            maxDeviationBps > MAX_ORACLE_DEVIATION_BPS ||
+            maxSandwichLossBps > MAX_SANDWICH_LOSS_BPS
+        ) revert QuoteDeviation();
+
         orderHash = hashOrder(
             msg.sender,
             tokenIn,
@@ -543,16 +849,45 @@ contract PublicRepresentativeProtectionV7 {
             nonce,
             salt
         );
-        uint64 committed = committedAt[orderHash];
-        if (committed == 0 || block.number < uint256(committed) + minimumDelayBlocks) revert TooEarly();
-        if (consumed[orderHash]) revert InvalidOrder();
-        if (routerOut < minOut || maxDeviationBps > BPS || maxSandwichLossBps > BPS) {
+
+        Commitment storage committed = commitment[orderHash];
+        if (committed.owner != msg.sender) revert UnauthorizedCommitter();
+        if (
+            committed.blockNumber == 0 ||
+            block.number <
+            uint256(committed.blockNumber) + minimumDelayBlocks
+        ) revert TooEarly();
+        if (committed.consumed) revert InvalidOrder();
+        if (routerOut < minOut || postTradeQuote < minOut) {
+            revert SandwichBound();
+        }
+
+        uint256 difference =
+            routerOut > oracleOut
+                ? routerOut - oracleOut
+                : oracleOut - routerOut;
+        if (difference * BPS > oracleOut * maxDeviationBps) {
             revert QuoteDeviation();
         }
-        uint256 difference = routerOut > oracleOut ? routerOut - oracleOut : oracleOut - routerOut;
-        if (difference * BPS > oracleOut * maxDeviationBps) revert QuoteDeviation();
-        uint256 sandwichLoss = routerOut > postTradeQuote ? routerOut - postTradeQuote : 0;
-        if (sandwichLoss * BPS > routerOut * maxSandwichLossBps) revert SandwichBound();
-        consumed[orderHash] = true;
+
+        uint256 sandwichLoss =
+            routerOut > postTradeQuote
+                ? routerOut - postTradeQuote
+                : 0;
+        if (
+            sandwichLoss * BPS >
+            routerOut * maxSandwichLossBps
+        ) revert SandwichBound();
+
+        committed.consumed = true;
+    }
+
+    function _isRepresentativePair(
+        address tokenIn,
+        address tokenOut
+    ) private view returns (bool) {
+        return
+            (tokenIn == tokenA && tokenOut == tokenB) ||
+            (tokenIn == tokenB && tokenOut == tokenA);
     }
 }

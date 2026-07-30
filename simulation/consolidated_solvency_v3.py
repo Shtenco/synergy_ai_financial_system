@@ -1,8 +1,8 @@
 """Consolidated SYNERGY solvency model V3.
 
-The model deliberately excludes token market capitalization from NAV and does
-not recognize transfers among protocol-owned modules as revenue. It is an
-economic model, not a price forecast.
+Market capitalization is excluded from NAV. Transfers among system-owned
+modules never create revenue. Every action is checked against projected,
+post-action solvency, liquidity and gas coverage.
 """
 from __future__ import annotations
 
@@ -15,13 +15,15 @@ from typing import Dict, Iterable, List
 import matplotlib.pyplot as plt
 import numpy as np
 
-BPS = 10_000.0
 NORMAL_SOLVENCY = 1.20
 DEFENSIVE_SOLVENCY = 1.05
 NORMAL_LIQUIDITY = 1.20
+LIQUIDITY_ACTION_BUFFER = 1.205
 MIN_GAS_COVERAGE = 1.20
+GAS_ACTION_BUFFER = 1.2005
 MIN_POLICY_RATIO = 0.70
 MIN_POOL_DEPTH = 25.0
+BASE_STRESSED_OUTFLOWS = 45.0
 
 
 @dataclass
@@ -43,7 +45,7 @@ class State:
     operating_cost_30d: float = 2.0
     redemption_shock: float = 0.0
     immediate_liquid: float = 75.0
-    stressed_outflows_30d: float = 45.0
+    stressed_outflows_30d: float = BASE_STRESSED_OUTFLOWS
     reimbursed_gas: float = 30.0
     reserve_policy_capital: float = 105.0
     conservative_obligations: float = 140.0
@@ -145,6 +147,20 @@ def dividendable_capital(s: State) -> float:
     return min(realized_bound, nav_bound)
 
 
+def projected_gas_coverage(s: State, gas_cost: float, net: float) -> float:
+    reimbursed = s.reimbursed_gas + gas_cost
+    reserve = s.gas_reserve + 0.20 * net
+    return (reimbursed + reserve) / reimbursed
+
+
+def projected_liquidity_coverage(s: State, net: float) -> float:
+    return (s.immediate_liquid + 0.70 * net) / s.stressed_outflows_30d
+
+
+def liquidity_slack(s: State) -> float:
+    return max(0.0, s.immediate_liquid - LIQUIDITY_ACTION_BUFFER * s.stressed_outflows_30d)
+
+
 def run_path(
     blocks: int = 20_000,
     seed: int = 42,
@@ -169,78 +185,91 @@ def run_path(
         yield_revenue = max(0.0, s.productive_yield * float(rng.normal(0.000018, 0.000006)))
         gross_external = 0.0025 * user_volume + mev_fee + service_revenue + yield_revenue
         external_opportunity = gross_external > 0.00015
+
+        gas_cost = gas_multiplier * max(0.00008, float(rng.lognormal(-8.7, 0.45)))
+        slippage = 0.0008 * user_volume * (1.0 + max(0.0, float(rng.normal(0.0, 0.4))))
+        adverse_selection = 0.00035 * user_volume * max(0.0, float(rng.normal(1.0, 0.35)))
+        total_cost = gas_cost + slippage + adverse_selection
+        minimum_margin = 0.0001
+        net_candidate = gross_external - total_cost
+
         s.mode = determine_mode(
             s,
             external_opportunity=external_opportunity,
             oracle_fresh=oracle_fresh,
             bridge_available=bridge_available,
         )
+        execute = (
+            s.mode in {"NORMAL", "DEFENSIVE"}
+            and net_candidate > minimum_margin
+            and projected_gas_coverage(s, gas_cost, net_candidate) >= GAS_ACTION_BUFFER
+            and projected_liquidity_coverage(s, net_candidate) >= NORMAL_LIQUIDITY
+        )
 
-        if s.mode == "PAUSED":
+        if not execute:
             s.pauses += 1
-        else:
-            gas_cost = gas_multiplier * max(0.00008, float(rng.lognormal(-8.7, 0.45)))
-            slippage = 0.0008 * user_volume * (1.0 + max(0.0, float(rng.normal(0.0, 0.4))))
-            adverse_selection = 0.00035 * user_volume * max(0.0, float(rng.normal(1.0, 0.35)))
-            total_cost = gas_cost + slippage + adverse_selection
-            minimum_margin = 0.0001
-
-            if gross_external > total_cost + minimum_margin:
-                net = gross_external - total_cost
-                s.cumulative_external_revenue += gross_external
-                s.cumulative_external_cost += total_cost
-                s.realized_external_pnl += net
-                s.liquid += net
-                s.immediate_liquid += 0.70 * net
-                s.gas_reserve += 0.20 * net
-                s.insurance += 0.10 * net
-                s.reimbursed_gas += gas_cost
-                s.useful_actions += 1
-
-                # External flow only: issue and redeem bounded external SYN.
-                external_issue = min(0.018 * user_volume, s.protocol_inventory)
-                external_redeem = min(
-                    s.external_supply,
-                    external_issue * float(rng.uniform(0.70, 1.05)),
-                )
-                s.protocol_inventory -= external_issue
-                s.external_supply += external_issue - external_redeem
-                s.external_syn_liability += external_issue - external_redeem
-                s.internal_transfer_volume += 3.0 * gross_external
-                s.main_pool_depth += 0.25 * net
-            else:
-                # No action is preferable to reserve destruction.
+            if external_opportunity:
                 s.gas_skips += 1
+        else:
+            net = net_candidate
+            s.cumulative_external_revenue += gross_external
+            s.cumulative_external_cost += total_cost
+            s.realized_external_pnl += net
+            s.liquid += net
+            s.immediate_liquid += 0.70 * net
+            s.gas_reserve += 0.20 * net
+            s.insurance += 0.10 * net
+            s.reimbursed_gas += gas_cost
+            s.useful_actions += 1
 
-        # Stochastic external redemption demand is a stress liability, not revenue.
+            external_issue = min(0.018 * user_volume, s.protocol_inventory)
+            external_redeem = min(
+                s.external_supply,
+                external_issue * float(rng.uniform(0.70, 1.05)),
+            )
+            s.protocol_inventory -= external_issue
+            s.external_supply += external_issue - external_redeem
+            s.external_syn_liability += external_issue - external_redeem
+            s.internal_transfer_volume += 3.0 * gross_external
+            s.main_pool_depth += 0.25 * net
+
         if block % 50 == 0:
             shock = redemption_multiplier * max(0.0, float(rng.normal(0.08, 0.035)))
             s.redemption_shock = shock * (s.external_syn_liability + s.external_synr_claims)
-            s.stressed_outflows_30d = max(20.0, 45.0 + s.redemption_shock)
         if block % 200 == 0:
             s.redemption_shock *= 0.50
+        if block % 50 == 0:
+            s.stressed_outflows_30d = max(20.0, BASE_STRESSED_OUTFLOWS + s.redemption_shock)
 
-        # Productive QE: reserve reclassification only; no NAV jump.
         if block % 500 == 0 and s.mode == "NORMAL":
             excess = max(0.0, s.liquid - required_capital(s))
-            qe = min(0.10 * excess, 5.0)
+            qe = min(0.10 * excess, 5.0, liquidity_slack(s))
             if qe > 0:
                 s.liquid -= qe
                 s.stable_lp += 0.50 * qe
                 s.bridge += 0.25 * qe
                 s.insurance += 0.25 * qe
-                s.immediate_liquid = max(0.0, s.immediate_liquid - qe)
+                s.immediate_liquid -= qe
                 s.internal_transfer_volume += qe
 
-        # Dividend only from realized external profit and only in NORMAL mode.
         if block % 1000 == 0 and s.mode == "NORMAL":
             capacity = dividendable_capital(s)
-            dividend = min(0.10 * capacity, max(0.0, s.liquid - required_capital(s)))
+            dividend = min(
+                0.10 * capacity,
+                max(0.0, s.liquid - required_capital(s)),
+                liquidity_slack(s),
+            )
             if dividend > 0:
                 s.liquid -= dividend
-                s.immediate_liquid = max(0.0, s.immediate_liquid - dividend)
+                s.immediate_liquid -= dividend
                 s.dividends += dividend
 
+        s.mode = determine_mode(
+            s,
+            external_opportunity=external_opportunity,
+            oracle_fresh=oracle_fresh,
+            bridge_available=bridge_available,
+        )
         nav = consolidated_nav(s)
         s.peak_nav = max(s.peak_nav, nav)
         if s.peak_nav > 0:
@@ -300,45 +329,58 @@ def write_outputs(output_dir: Path, state: State, history: Iterable[Dict[str, ob
     )
 
     x = [int(r["block"]) for r in rows]
-    charts = [
-        ("consolidated_nav.png", "Consolidated NAV", [float(r["nav"]) for r in rows]),
-        ("solvency_ratio.png", "Economic Solvency Ratio", [float(r["solvency_ratio"]) for r in rows]),
-        ("liquidity_coverage.png", "Liquidity Coverage", [float(r["liquidity_coverage"]) for r in rows]),
-        ("external_pnl_dividends.png", "External PnL and Dividends", None),
-        ("mm_inventory.png", "External Supply and Protocol Inventory", None),
+    chart_specs = [
+        ("consolidated_nav.png", "Consolidated NAV", "nav"),
+        ("solvency_ratio.png", "Economic Solvency Ratio", "solvency_ratio"),
+        ("liquidity_coverage.png", "Liquidity Coverage", "liquidity_coverage"),
     ]
-    for filename, title, values in charts:
+    for filename, title, key in chart_specs:
         plt.figure(figsize=(10, 5.5))
-        if filename == "external_pnl_dividends.png":
-            plt.plot(x, [float(r["external_pnl"]) for r in rows], label="External realized PnL")
-            plt.plot(x, [float(r["dividends"]) for r in rows], label="Dividends")
-            plt.legend()
-        elif filename == "mm_inventory.png":
-            plt.plot(x, [float(r["external_supply"]) for r in rows], label="External supply")
-            plt.plot(x, [float(r["protocol_inventory"]) for r in rows], label="Protocol inventory")
-            plt.legend()
-        else:
-            plt.plot(x, values)
+        plt.plot(x, [float(r[key]) for r in rows])
         plt.xlabel("Block")
         plt.title(title)
         plt.tight_layout()
         plt.savefig(output_dir / filename, dpi=160)
         plt.close()
 
+    plt.figure(figsize=(10, 5.5))
+    plt.plot(x, [float(r["external_pnl"]) for r in rows], label="External realized PnL")
+    plt.plot(x, [float(r["dividends"]) for r in rows], label="Dividends")
+    plt.xlabel("Block")
+    plt.title("External PnL and Dividends")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_dir / "external_pnl_dividends.png", dpi=160)
+    plt.close()
+
+    plt.figure(figsize=(10, 5.5))
+    plt.plot(x, [float(r["external_supply"]) for r in rows], label="External supply")
+    plt.plot(x, [float(r["protocol_inventory"]) for r in rows], label="Protocol inventory")
+    plt.xlabel("Block")
+    plt.title("External Supply and Protocol Inventory")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_dir / "mm_inventory.png", dpi=160)
+    plt.close()
+
 
 def main() -> None:
-    output = Path("reports")
     state, history = run_path()
-    write_outputs(output, state, history)
-    print(json.dumps({
-        "mode": state.mode,
-        "solvency_ratio": solvency_ratio(state),
-        "liquidity_coverage": liquidity_coverage(state),
-        "gas_coverage": gas_coverage(state),
-        "external_pnl": state.realized_external_pnl,
-        "dividends": state.dividends,
-        "insolvency_events": state.insolvency_events,
-    }, indent=2))
+    write_outputs(Path("reports"), state, history)
+    print(
+        json.dumps(
+            {
+                "mode": state.mode,
+                "solvency_ratio": solvency_ratio(state),
+                "liquidity_coverage": liquidity_coverage(state),
+                "gas_coverage": gas_coverage(state),
+                "external_pnl": state.realized_external_pnl,
+                "dividends": state.dividends,
+                "insolvency_events": state.insolvency_events,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

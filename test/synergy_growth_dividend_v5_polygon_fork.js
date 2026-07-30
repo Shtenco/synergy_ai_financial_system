@@ -9,18 +9,22 @@ const QUICKSWAP_V3_QUOTER = "0xa15F0D7377B2A0C0c10db057f641beD21028FC89";
 const QUICKSWAP_V3_POSITION_MANAGER = "0x8eF88E4c7CfbbaC1C163f7eddd4B578792201de6";
 const E = ethers.parseEther;
 const WAD = E("1");
+
 const WPOL_ABI = [
   "function deposit() payable",
   "function approve(address,uint256) returns(bool)",
   "function balanceOf(address) view returns(uint256)"
 ];
-const FACTORY_ABI = ["function poolByPair(address,address) view returns(address)"];
+const FACTORY_ABI = [
+  "function poolByPair(address,address) view returns(address)"
+];
 const POSITION_MANAGER_ABI = [
   "function positions(uint256 tokenId) view returns(uint96 nonce,address operator,address token0,address token1,int24 tickLower,int24 tickUpper,uint128 liquidity,uint256 feeGrowthInside0LastX128,uint256 feeGrowthInside1LastX128,uint128 tokensOwed0,uint128 tokensOwed1)"
 ];
 const QUOTER_ABI = [
   "function quoteExactInputSingle(address tokenIn,address tokenOut,uint256 amountIn,uint160 limitSqrtPrice) returns(uint256 amountOut,uint16 fee)"
 ];
+
 const source = (label) => ethers.keccak256(ethers.toUtf8Bytes(label));
 const decimal = (value) => Number(ethers.formatEther(value));
 const toWeiNumber = (value) => E(value.toFixed(12));
@@ -60,12 +64,14 @@ function equivalentPerExternalPol(tickLower, tickUpper, sigma, epsilon = 0.01) {
 async function setEligible(registry, admin, participant, label) {
   const block = await ethers.provider.getBlock("latest");
   await (
-    await registry.connect(admin).setParticipant(
-      participant.address,
-      true,
-      BigInt(block.timestamp + 86400),
-      source(label)
-    )
+    await registry
+      .connect(admin)
+      .setParticipant(
+        participant.address,
+        true,
+        BigInt(block.timestamp + 86400),
+        source(label)
+      )
   ).wait();
 }
 
@@ -78,7 +84,8 @@ async function invariantMetrics(engine, npm, capitalPol, sigma = 0.05) {
     polPA * equivalentPerExternalPol(positionPA.tickLower, positionPA.tickUpper, sigma) +
     polPR * equivalentPerExternalPol(positionPR.tickLower, positionPR.tickUpper, 0.7 * sigma);
   const recognisedEquivalent = Math.min(rawEquivalent, 5 * capitalPol);
-  const lpPol = (await engine.anchorPoolPolSyna()) + (await engine.anchorPoolPolSynr());
+  const lpPol =
+    (await engine.anchorPoolPolSyna()) + (await engine.anchorPoolPolSynr());
   const haircutAssets =
     (await engine.liquidReservePol()) +
     (await engine.gasReservePol()) +
@@ -92,6 +99,7 @@ async function invariantMetrics(engine, npm, capitalPol, sigma = 0.05) {
     (await engine.liquidReservePol()) +
     (await engine.insurancePol()) +
     lpPol / 2n;
+
   return {
     rawEquivalent,
     recognisedEquivalent,
@@ -130,7 +138,12 @@ describe("SYNERGY V5 dividend compounding and own DEX on Polygon fork", function
       outsider
     ] = await ethers.getSigners();
 
-    for (const address of [WPOL, QUICKSWAP_V3_FACTORY, QUICKSWAP_V3_QUOTER, QUICKSWAP_V3_POSITION_MANAGER]) {
+    for (const address of [
+      WPOL,
+      QUICKSWAP_V3_FACTORY,
+      QUICKSWAP_V3_QUOTER,
+      QUICKSWAP_V3_POSITION_MANAGER
+    ]) {
       assert.notEqual(await ethers.provider.getCode(address), "0x");
     }
 
@@ -144,41 +157,69 @@ describe("SYNERGY V5 dividend compounding and own DEX on Polygon fork", function
     await (await wpolTrader.deposit({ value: E("10") })).wait();
 
     const Engine = await ethers.getContractFactory("TriangularLiquidityEngineV5", deployer);
-    const engine = await Engine.deploy(WPOL, QUICKSWAP_V3_POSITION_MANAGER, protocolTreasury.address);
+    const engine = await Engine.deploy(
+      WPOL,
+      QUICKSWAP_V3_POSITION_MANAGER,
+      protocolTreasury.address
+    );
     await engine.waitForDeployment();
     const engineAddress = await engine.getAddress();
+
     await (await wpolDeployer.approve(engineAddress, E("100"))).wait();
     await (await wpolAnchor.approve(engineAddress, E("20"))).wait();
     await (await engine.depositByKeeper(E("100"))).wait();
     await (await engine.connect(anchorInvestor).depositByKeeper(E("20"))).wait();
+
     assert.equal(await engine.originalExternalCapitalPol(), E("120"));
     assert.equal(await engine.totalBackedCapitalPol(), E("120"));
     assert.equal(await engine.internalTransferRevenuePol(), 0n);
 
-    const Invariant = await ethers.getContractFactory("RealLiquidityMultiplierInvariant", deployer);
+    const Invariant = await ethers.getContractFactory(
+      "RealLiquidityMultiplierInvariant",
+      deployer
+    );
     const invariant = await Invariant.deploy(deployer.address, deployer.address);
     await invariant.waitForDeployment();
-    const npm = new ethers.Contract(QUICKSWAP_V3_POSITION_MANAGER, POSITION_MANAGER_ABI, deployer);
+
+    const npm = new ethers.Contract(
+      QUICKSWAP_V3_POSITION_MANAGER,
+      POSITION_MANAGER_ABI,
+      deployer
+    );
     const beforePA = await npm.positions(await engine.lastPolSynaPositionId());
     const beforePR = await npm.positions(await engine.lastPolSynrPositionId());
     const initial = await invariantMetrics(engine, npm, 120);
     const initialPreview = await invariant.preview(initial.metrics);
     assert.equal(initialPreview.pass, true);
-    await (await invariant.record(source("v5-before-profit"), initial.metrics)).wait();
+    await (
+      await invariant.record(source("v5-before-profit"), initial.metrics)
+    ).wait();
 
-    const Registry = await ethers.getContractFactory("ParticipantTaxRegistry", deployer);
+    const Registry = await ethers.getContractFactory(
+      "ParticipantTaxRegistry",
+      deployer
+    );
     const participantRegistry = await Registry.deploy(deployer.address);
     await participantRegistry.waitForDeployment();
     for (const [participant, label] of [
       [deployer, "owner"],
       [keeperUser, "keeper"],
       [registeredTrader, "trader"]
-    ]) await setEligible(participantRegistry, deployer, participant, label);
+    ]) {
+      await setEligible(participantRegistry, deployer, participant, label);
+    }
 
-    const Boundary = await ethers.getContractFactory("SystemBoundaryRegistry", deployer);
+    const Boundary = await ethers.getContractFactory(
+      "SystemBoundaryRegistry",
+      deployer
+    );
     const boundary = await Boundary.deploy(deployer.address);
     await boundary.waitForDeployment();
-    const Controller = await ethers.getContractFactory("AutoReinvestDividendControllerV5", deployer);
+
+    const Controller = await ethers.getContractFactory(
+      "AutoReinvestDividendControllerV5",
+      deployer
+    );
     const controller = await Controller.deploy(
       WPOL,
       await participantRegistry.getAddress(),
@@ -193,23 +234,34 @@ describe("SYNERGY V5 dividend compounding and own DEX on Polygon fork", function
     );
     await controller.waitForDeployment();
     const controllerAddress = await controller.getAddress();
+
     await (
       await boundary.setSystemAddresses(
-        [engineAddress, controllerAddress, protocolTreasury.address, taxEscrow.address],
+        [
+          engineAddress,
+          controllerAddress,
+          protocolTreasury.address,
+          taxEscrow.address
+        ],
         true
       )
     ).wait();
     await (await engine.setProfitController(controllerAddress)).wait();
     await (await controller.setOperator(keeperUser.address, true)).wait();
-    await (await wpolProfit.approve(controllerAddress, E("20"))).wait();
+
     await (
-      await controller.connect(keeperUser).settleExternalProfit(
+      await wpolProfit.approve(controllerAddress, E("20"))
+    ).wait();
+    const settleTx = await controller
+      .connect(keeperUser)
+      .settleExternalProfit(
         externalProfitPayer.address,
         E("20"),
         keeperUser.address,
-        source("real-external-profit-v5")
-      )
-    ).wait();
+        source("real-external-profit-v5"),
+        { gasLimit: 12_000_000n }
+      );
+    const settleReceipt = await settleTx.wait();
 
     assert.equal(await controller.cumulativeGrossExternalProfit(), E("20"));
     assert.equal(await controller.cumulativeGrossDividends(), E("2"));
@@ -230,72 +282,119 @@ describe("SYNERGY V5 dividend compounding and own DEX on Polygon fork", function
     const afterPR = await npm.positions(await engine.lastPolSynrPositionId());
     assert.ok(afterPA.liquidity > beforePA.liquidity);
     assert.ok(afterPR.liquidity > beforePR.liquidity);
+
     const after = await invariantMetrics(engine, npm, 139.8);
     const afterPreview = await invariant.preview(after.metrics);
     assert.equal(afterPreview.pass, true);
-    await (await invariant.record(source("v5-after-compounding"), after.metrics)).wait();
+    await (
+      await invariant.record(source("v5-after-compounding"), after.metrics)
+    ).wait();
 
-    const Factory = await ethers.getContractFactory("SynergyDexFactoryV5", deployer);
+    const Factory = await ethers.getContractFactory(
+      "SynergyDexFactoryV5",
+      deployer
+    );
     const ownFactory = await Factory.deploy(await participantRegistry.getAddress());
     await ownFactory.waitForDeployment();
-    const Router = await ethers.getContractFactory("SynergyDexRouterV5", deployer);
-    const ownRouter = await Router.deploy(await participantRegistry.getAddress(), await ownFactory.getAddress());
+    const Router = await ethers.getContractFactory(
+      "SynergyDexRouterV5",
+      deployer
+    );
+    const ownRouter = await Router.deploy(
+      await participantRegistry.getAddress(),
+      await ownFactory.getAddress()
+    );
     await ownRouter.waitForDeployment();
-    await (await ownFactory.setRouter(await ownRouter.getAddress(), true)).wait();
+    await (
+      await ownFactory.setRouter(await ownRouter.getAddress(), true)
+    ).wait();
 
     const syna = await engine.syna();
     await (await ownFactory.createPair(WPOL, syna)).wait();
     const ownPair = await ownFactory.getPair(WPOL, syna);
     assert.notEqual(ownPair, ethers.ZeroAddress);
     await (await engine.setRepresentativeEndpoint(ownPair, true)).wait();
-    await (await engine.mintRepresentativeInventory(registeredTrader.address, E("10"))).wait();
+    await (
+      await engine.mintRepresentativeInventory(registeredTrader.address, E("10"))
+    ).wait();
 
-    const synaToken = await ethers.getContractAt("SynergyRepresentativeTokenV5", syna, registeredTrader);
-    await (await wpolTrader.approve(await ownRouter.getAddress(), ethers.MaxUint256)).wait();
-    await (await synaToken.approve(await ownRouter.getAddress(), ethers.MaxUint256)).wait();
+    const synaToken = await ethers.getContractAt(
+      "SynergyRepresentativeTokenV5",
+      syna,
+      registeredTrader
+    );
+    await (
+      await wpolTrader.approve(await ownRouter.getAddress(), ethers.MaxUint256)
+    ).wait();
+    await (
+      await synaToken.approve(await ownRouter.getAddress(), ethers.MaxUint256)
+    ).wait();
     const deadline = BigInt((await ethers.provider.getBlock("latest")).timestamp + 3600);
     await (
-      await ownRouter.connect(registeredTrader).addLiquidity(
-        WPOL,
-        syna,
-        E("5"),
-        E("5"),
-        registeredTrader.address,
-        deadline
-      )
+      await ownRouter
+        .connect(registeredTrader)
+        .addLiquidity(
+          WPOL,
+          syna,
+          E("5"),
+          E("5"),
+          registeredTrader.address,
+          deadline
+        )
     ).wait();
+
     const beforeSyna = await synaToken.balanceOf(registeredTrader.address);
     await (
-      await ownRouter.connect(registeredTrader).swapExactTokensForTokens(
-        WPOL,
-        syna,
-        E("1"),
-        E("0.8"),
-        registeredTrader.address,
-        deadline
-      )
+      await ownRouter
+        .connect(registeredTrader)
+        .swapExactTokensForTokens(
+          WPOL,
+          syna,
+          E("1"),
+          E("0.8"),
+          registeredTrader.address,
+          deadline
+        )
     ).wait();
     assert.ok((await synaToken.balanceOf(registeredTrader.address)) > beforeSyna);
 
     const wpolOutsider = new ethers.Contract(WPOL, WPOL_ABI, outsider);
     await (await wpolOutsider.deposit({ value: E("1") })).wait();
-    await (await wpolOutsider.approve(await ownRouter.getAddress(), E("1"))).wait();
+    await (
+      await wpolOutsider.approve(await ownRouter.getAddress(), E("1"))
+    ).wait();
     await assert.rejects(
-      ownRouter.connect(outsider).swapExactTokensForTokens(
-        WPOL,
-        syna,
-        E("1"),
-        E("0.8"),
-        outsider.address,
-        deadline
-      )
+      ownRouter
+        .connect(outsider)
+        .swapExactTokensForTokens(
+          WPOL,
+          syna,
+          E("1"),
+          E("0.8"),
+          outsider.address,
+          deadline
+        )
     );
 
-    const publicFactory = new ethers.Contract(QUICKSWAP_V3_FACTORY, FACTORY_ABI, deployer);
+    const publicFactory = new ethers.Contract(
+      QUICKSWAP_V3_FACTORY,
+      FACTORY_ABI,
+      deployer
+    );
     const publicPolSynaPool = await publicFactory.poolByPair(WPOL, syna);
     assert.notEqual(publicPolSynaPool, ethers.ZeroAddress);
-    const quoter = new ethers.Contract(QUICKSWAP_V3_QUOTER, QUOTER_ABI, deployer);
-    const publicQuote = await quoter.quoteExactInputSingle.staticCall(WPOL, syna, E("0.1"), 0);
+
+    const quoter = new ethers.Contract(
+      QUICKSWAP_V3_QUOTER,
+      QUOTER_ABI,
+      deployer
+    );
+    const publicQuote = await quoter.quoteExactInputSingle.staticCall(
+      WPOL,
+      syna,
+      E("0.1"),
+      0
+    );
     assert.ok(publicQuote.amountOut > 0n);
 
     const result = {
@@ -325,8 +424,10 @@ describe("SYNERGY V5 dividend compounding and own DEX on Polygon fork", function
       unregisteredTradeRejected: true,
       zeroMinOutForbidden: true,
       internalTransferRevenuePOL: 0,
+      settleGasUsed: Number(settleReceipt.gasUsed),
       pass: afterPreview.pass
     };
+
     fs.mkdirSync(path.join(process.cwd(), "reports"), { recursive: true });
     fs.writeFileSync(
       path.join(process.cwd(), "reports", "synergy_v5_polygon_fork.json"),

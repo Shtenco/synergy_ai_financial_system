@@ -45,7 +45,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p reports
-          python simulation/synergy_graph_arbitrage_v7.py 2>&1 | tee reports/synergy-graph-v7-model.log
+          python simulation/run_synergy_graph_v7.py 2>&1 | tee reports/synergy-graph-v7-model.log
 
       - name: Start Polygon fork
         shell: bash

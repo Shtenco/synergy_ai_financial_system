@@ -10,9 +10,9 @@ interface IERC20BalanceLedger {
     function balanceOf(address account) external view returns (uint256);
 }
 
-/// @notice Double-entry economic ledger for the consolidated SYNERGY boundary.
-/// Every entry has equal debit and credit amounts. Internal transfers never
-/// modify realized external PnL or consolidated NAV.
+/// @notice Consolidated double-entry ledger. Internal transfers can never
+/// modify external PnL or NAV. External revenue requires a proven token balance
+/// delta and every sourceId can be consumed only once.
 contract ConsolidatedLedger {
     enum Classification {
         INTERNAL_TRANSFER,
@@ -117,32 +117,16 @@ contract ConsolidatedLedger {
         emit RecorderSet(nextAdmin, true);
     }
 
-    function recordInternalTransfer(
-        bytes32 sourceId,
-        address asset,
-        uint256 amount,
-        address from,
-        address to
-    ) external onlyRecorder returns (uint256 id) {
+    function recordInternalTransfer(bytes32 sourceId, address asset, uint256 amount, address from, address to)
+        external
+        onlyRecorder
+        returns (uint256)
+    {
         if (!registry.isInternalTransfer(from, to)) revert BoundaryViolation();
         internalTransferVolume += amount;
-        id = _record(
-            sourceId,
-            asset,
-            amount,
-            from,
-            to,
-            Classification.INTERNAL_TRANSFER,
-            address(0),
-            0,
-            0,
-            0
-        );
+        return _entry(sourceId, asset, amount, from, to, Classification.INTERNAL_TRANSFER, address(0), 0, 0, 0);
     }
 
-    /// @notice Records a real positive balance delta received from outside the
-    /// consolidated boundary. The caller supplies the receiver balance before
-    /// the transfer and the ledger verifies the post-transfer balance on-chain.
     function recordExternalRevenue(
         bytes32 sourceId,
         address asset,
@@ -151,19 +135,20 @@ contract ConsolidatedLedger {
         address externalPayer,
         address systemReceiver,
         uint256 receiverBalanceBefore
-    ) external onlyRecorder returns (uint256 id) {
+    ) external onlyRecorder returns (uint256) {
         if (
             registry.isSystemAddress(externalPayer) || !registry.isSystemAddress(systemReceiver)
                 || grossAmount == 0 || externalCosts > grossAmount
         ) revert BoundaryViolation();
-        uint256 current = IERC20BalanceLedger(asset).balanceOf(systemReceiver);
-        if (current < receiverBalanceBefore + grossAmount) revert BalanceDeltaNotProven();
+        if (IERC20BalanceLedger(asset).balanceOf(systemReceiver) < receiverBalanceBefore + grossAmount) {
+            revert BalanceDeltaNotProven();
+        }
         uint256 net = grossAmount - externalCosts;
         cumulativeExternalRevenue += grossAmount;
         cumulativeExternalExpense += externalCosts;
         realizedExternalPnL += int256(net);
         consolidatedNavDelta += int256(net);
-        id = _record(
+        return _entry(
             sourceId,
             asset,
             grossAmount,
@@ -177,8 +162,8 @@ contract ConsolidatedLedger {
         );
     }
 
-    /// @notice Records external capital received against a matching external
-    /// liability. The inflow is not revenue and does not increase NAV.
+    /// @notice Capital received against a matching external obligation. It is
+    /// neither revenue nor NAV growth.
     function recordCapitalInflowAndLiability(
         bytes32 sourceId,
         address asset,
@@ -187,15 +172,16 @@ contract ConsolidatedLedger {
         address systemReceiver,
         uint256 receiverBalanceBefore,
         uint256 liabilityIssued
-    ) external onlyRecorder returns (uint256 id) {
+    ) external onlyRecorder returns (uint256) {
         if (
             registry.isSystemAddress(externalPayer) || !registry.isSystemAddress(systemReceiver)
                 || amount == 0 || liabilityIssued == 0
         ) revert BoundaryViolation();
-        uint256 current = IERC20BalanceLedger(asset).balanceOf(systemReceiver);
-        if (current < receiverBalanceBefore + amount) revert BalanceDeltaNotProven();
+        if (IERC20BalanceLedger(asset).balanceOf(systemReceiver) < receiverBalanceBefore + amount) {
+            revert BalanceDeltaNotProven();
+        }
         externalLiabilities += liabilityIssued;
-        id = _record(
+        return _entry(
             sourceId,
             asset,
             amount,
@@ -215,15 +201,14 @@ contract ConsolidatedLedger {
         uint256 amount,
         address systemPayer,
         address externalRecipient
-    ) external onlyRecorder returns (uint256 id) {
-        if (
-            !registry.isSystemAddress(systemPayer) || registry.isSystemAddress(externalRecipient)
-                || amount == 0
-        ) revert BoundaryViolation();
+    ) external onlyRecorder returns (uint256) {
+        if (!registry.isSystemAddress(systemPayer) || registry.isSystemAddress(externalRecipient) || amount == 0) {
+            revert BoundaryViolation();
+        }
         cumulativeExternalExpense += amount;
         realizedExternalPnL -= int256(amount);
         consolidatedNavDelta -= int256(amount);
-        id = _record(
+        return _entry(
             sourceId,
             asset,
             amount,
@@ -237,20 +222,54 @@ contract ConsolidatedLedger {
         );
     }
 
+    /// @notice Atomic discounted redemption accounting. Paying 0.75 reserve
+    /// units to retire a 1.00 reserve-unit liability realizes +0.25 PnL.
+    function recordDiscountedLiabilityRedemption(
+        bytes32 sourceId,
+        address asset,
+        uint256 liabilityRetired,
+        uint256 payment,
+        address externalHolder,
+        address systemPayer
+    ) external onlyRecorder returns (uint256) {
+        if (
+            registry.isSystemAddress(externalHolder) || !registry.isSystemAddress(systemPayer)
+                || liabilityRetired == 0 || payment > liabilityRetired
+        ) revert BoundaryViolation();
+        if (liabilityRetired > externalLiabilities) revert LiabilityUnderflow();
+        externalLiabilities -= liabilityRetired;
+        cumulativeExternalExpense += payment;
+        uint256 discountProfit = liabilityRetired - payment;
+        realizedExternalPnL += int256(discountProfit);
+        consolidatedNavDelta += int256(discountProfit);
+        return _entry(
+            sourceId,
+            asset,
+            payment == 0 ? liabilityRetired : payment,
+            systemPayer,
+            externalHolder,
+            Classification.LIABILITY_REDEMPTION,
+            externalHolder,
+            -int256(liabilityRetired),
+            int256(discountProfit),
+            int256(discountProfit)
+        );
+    }
+
     function recordLiabilityRedemption(
         bytes32 sourceId,
         address asset,
         uint256 liabilityRetired,
         address externalHolder,
         address systemReceiver
-    ) external onlyRecorder returns (uint256 id) {
+    ) external onlyRecorder returns (uint256) {
         if (
             registry.isSystemAddress(externalHolder) || !registry.isSystemAddress(systemReceiver)
                 || liabilityRetired == 0
         ) revert BoundaryViolation();
         if (liabilityRetired > externalLiabilities) revert LiabilityUnderflow();
         externalLiabilities -= liabilityRetired;
-        id = _record(
+        return _entry(
             sourceId,
             asset,
             liabilityRetired,
@@ -264,15 +283,14 @@ contract ConsolidatedLedger {
         );
     }
 
-    function recordInventoryIncrease(
-        bytes32 sourceId,
-        address asset,
-        uint256 amount,
-        address systemHolder
-    ) external onlyRecorder returns (uint256 id) {
+    function recordInventoryIncrease(bytes32 sourceId, address asset, uint256 amount, address systemHolder)
+        external
+        onlyRecorder
+        returns (uint256)
+    {
         if (!registry.isSystemAddress(systemHolder) || amount == 0) revert BoundaryViolation();
         protocolInventory += amount;
-        id = _record(
+        return _entry(
             sourceId,
             asset,
             amount,
@@ -292,11 +310,11 @@ contract ConsolidatedLedger {
         uint256 amount,
         address systemHolder,
         address destination
-    ) external onlyRecorder returns (uint256 id) {
+    ) external onlyRecorder returns (uint256) {
         if (!registry.isSystemAddress(systemHolder) || amount == 0) revert BoundaryViolation();
         if (amount > protocolInventory) revert InventoryUnderflow();
         protocolInventory -= amount;
-        id = _record(
+        return _entry(
             sourceId,
             asset,
             amount,
@@ -316,12 +334,12 @@ contract ConsolidatedLedger {
         uint256 amount,
         address systemAccount,
         address externalCounterparty
-    ) external onlyRecorder returns (uint256 id) {
+    ) external onlyRecorder returns (uint256) {
         if (!registry.isSystemAddress(systemAccount) || amount == 0) revert BoundaryViolation();
         realizedLosses += amount;
         realizedExternalPnL -= int256(amount);
         consolidatedNavDelta -= int256(amount);
-        id = _record(
+        return _entry(
             sourceId,
             asset,
             amount,
@@ -341,14 +359,13 @@ contract ConsolidatedLedger {
         uint256 amount,
         address systemPayer,
         address externalRecipient
-    ) external onlyRecorder returns (uint256 id) {
-        if (
-            !registry.isSystemAddress(systemPayer) || registry.isSystemAddress(externalRecipient)
-                || amount == 0
-        ) revert BoundaryViolation();
+    ) external onlyRecorder returns (uint256) {
+        if (!registry.isSystemAddress(systemPayer) || registry.isSystemAddress(externalRecipient) || amount == 0) {
+            revert BoundaryViolation();
+        }
         totalDividends += amount;
         consolidatedNavDelta -= int256(amount);
-        id = _record(
+        return _entry(
             sourceId,
             asset,
             amount,
@@ -362,7 +379,7 @@ contract ConsolidatedLedger {
         );
     }
 
-    function _record(
+    function _entry(
         bytes32 sourceId,
         address asset,
         uint256 amount,
@@ -371,7 +388,7 @@ contract ConsolidatedLedger {
         Classification classification,
         address externalCounterparty,
         int256 liabilityDelta,
-        int256 realizedPnLDelta,
+        int256 pnlDelta,
         int256 navDelta
     ) private returns (uint256 id) {
         if (sourceId == bytes32(0) || asset == address(0) || amount == 0) revert InvalidEntry();
@@ -388,7 +405,7 @@ contract ConsolidatedLedger {
             sourceId: sourceId,
             externalCounterparty: externalCounterparty,
             liabilityDelta: liabilityDelta,
-            realizedPnLDelta: realizedPnLDelta,
+            realizedPnLDelta: pnlDelta,
             navDelta: navDelta,
             timestamp: uint64(block.timestamp)
         });
@@ -402,7 +419,7 @@ contract ConsolidatedLedger {
             to,
             externalCounterparty,
             liabilityDelta,
-            realizedPnLDelta,
+            pnlDelta,
             navDelta
         );
     }

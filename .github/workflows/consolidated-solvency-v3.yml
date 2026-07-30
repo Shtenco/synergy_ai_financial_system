@@ -41,19 +41,42 @@ jobs:
       - name: Compile all contracts
         run: npx hardhat compile
 
-      - name: Run consolidated unit and invariant tests
+      - name: Test 1000 internal cycles zero PnL
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p reports
-          npx hardhat test \
-            test/consolidated_internal_cycle_zero_pnl.js \
-            test/external_mm_revenue_cycle.js \
-            test/zero_revenue_safe_pause.js \
-            test/dividend_external_profit_only.js \
-            test/stress_redemptions.js \
-            test/stress_gas_oracle_bridge.js \
-            --network hardhat 2>&1 | tee reports/consolidated-unit-tests.log
+          npx hardhat test test/consolidated_internal_cycle_zero_pnl.js --network hardhat 2>&1 | tee reports/internal-zero-pnl.log
+
+      - name: Test 1000 external issue and QT cycles
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/external_mm_revenue_cycle.js --network hardhat 2>&1 | tee reports/external-mm-revenue.log
+
+      - name: Test zero revenue safe pause
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/zero_revenue_safe_pause.js --network hardhat 2>&1 | tee reports/zero-revenue-pause.log
+
+      - name: Test external profit only dividend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/dividend_external_profit_only.js --network hardhat 2>&1 | tee reports/dividend-external-profit.log
+
+      - name: Test redemption stress states
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/stress_redemptions.js --network hardhat 2>&1 | tee reports/stress-redemptions.log
+
+      - name: Test gas oracle and bridge gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/stress_gas_oracle_bridge.js --network hardhat 2>&1 | tee reports/stress-gas-oracle-bridge.log
 
       - name: Start Polygon fork
         shell: bash

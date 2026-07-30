@@ -8,20 +8,29 @@ describe("Consolidated internal-cycle accounting", function () {
     const f = await deployConsolidatedFixture();
     const mmAddress = await f.mm.getAddress();
 
-    for (let i = 0; i < 1000; i++) {
-      const from = i % 2 === 0 ? mmAddress : f.keeper.address;
-      const to = i % 2 === 0 ? f.keeper.address : mmAddress;
+    const Batch = await ethers.getContractFactory("ConsolidatedCycleBatchHarness", f.admin);
+    const batch = await Batch.deploy(
+      await f.ledger.getAddress(),
+      await f.mm.getAddress(),
+      await f.qt.getAddress()
+    );
+    await batch.waitForDeployment();
+    await (await f.ledger.setRecorder(await batch.getAddress(), true)).wait();
+
+    for (let start = 0; start < 1000; start += 100) {
       await (
-        await f.ledger.recordInternalTransfer(
-          source("internal-cycle", i),
+        await batch.batchInternalTransfers(
+          start,
+          100,
           await f.reserve.getAddress(),
           E("1"),
-          from,
-          to
+          mmAddress,
+          f.keeper.address
         )
       ).wait();
     }
 
+    assert.equal(await f.ledger.entryCount(), 1000n);
     assert.equal(await f.ledger.internalTransferVolume(), E("1000"));
     assert.equal(await f.ledger.cumulativeExternalRevenue(), 0n);
     assert.equal(await f.ledger.externalLiabilities(), 0n);

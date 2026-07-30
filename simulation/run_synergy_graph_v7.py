@@ -4,7 +4,7 @@ import json
 import math
 import numpy as np
 
-from simulation import synergy_graph_arbitrage_v7 as core
+import synergy_graph_arbitrage_v7 as core
 
 REPORTS = Path("reports")
 

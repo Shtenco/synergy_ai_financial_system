@@ -8,7 +8,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       FORK_BLOCK_NUMBER: "90790000"
       LOCAL_FORK_URL: "http://127.0.0.1:8545"
@@ -40,15 +40,20 @@ jobs:
           done
           cat reports/anvil.log
           exit 1
-      - name: Run complete system test
+      - name: Run complete solvency and relay test
         shell: bash
         run: |
           set -euo pipefail
           npx hardhat test test/absolute_solvency_dividend_relay_full_fork.js --network polygonFork 2>&1 | tee reports/full-system-test.log
+      - name: Run V2 tender refill 1000-cycle test
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/qe_qt_v2_polygon_fork_renewable_cycle.js --network polygonFork 2>&1 | tee reports/qe-qt-v2-1000-cycle-test.log
       - name: Upload full report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: full-qe-qt-relay-report
+          name: full-qe-qt-v2-report
           path: reports/*
           if-no-files-found: warn

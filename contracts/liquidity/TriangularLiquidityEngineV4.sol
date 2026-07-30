@@ -19,6 +19,15 @@ interface IQuickSwapV3PositionManagerV4 {
         uint256 deadline;
     }
 
+    struct IncreaseLiquidityParams {
+        uint256 tokenId;
+        uint256 amount0Desired;
+        uint256 amount1Desired;
+        uint256 amount0Min;
+        uint256 amount1Min;
+        uint256 deadline;
+    }
+
     function createAndInitializePoolIfNecessary(
         address token0,
         address token1,
@@ -34,6 +43,11 @@ interface IQuickSwapV3PositionManagerV4 {
             uint256 amount0,
             uint256 amount1
         );
+
+    function increaseLiquidity(IncreaseLiquidityParams calldata params)
+        external
+        payable
+        returns (uint128 liquidity, uint256 amount0, uint256 amount1);
 }
 
 contract TriangularInternalTokenV4 is ERC20 {
@@ -129,7 +143,8 @@ contract TriangularLiquidityEngineV4 {
     }
 
     /// @notice Any anchor/investor may use the keeper path. The deposit creates
-    /// pro-rata risk equity, not a guaranteed par debt claim.
+    /// pro-rata risk equity, not a guaranteed par debt claim. The first deposit
+    /// creates the triangle; later deposits increase the existing positions.
     function depositByKeeper(uint256 amountPol) external returns (uint256 polUsed) {
         if (amountPol == 0) revert InvalidAmount();
         if (internalTransferRevenuePol != 0) revert ExternalRevenueInvariant();
@@ -148,42 +163,63 @@ contract TriangularLiquidityEngineV4 {
         gasReservePol += amountPol * GAS_BPS / BPS;
         operationsReservePol += amountPol * OPERATIONS_BPS / BPS;
 
-        // Equal token quantities initialise all pools at 1:1. Internal emission
-        // has zero recognised NAV and no external liability.
         syna.mint(address(this), desiredPolSyna + crossAmount);
         synr.mint(address(this), desiredPolSynr + crossAmount);
         cumulativeInternalEmission += desiredPolSyna + desiredPolSynr + 2 * crossAmount;
         crossPoolInternalNotional += crossAmount;
 
         uint256 polUsedSyna;
-        (polSynaPool, lastPolSynaPositionId, polUsedSyna) = _mintPosition(
-            address(wpol),
-            address(syna),
-            desiredPolSyna,
-            desiredPolSyna,
-            -2_400,
-            2_400
-        );
-
         uint256 polUsedSynr;
-        (polSynrPool, lastPolSynrPositionId, polUsedSynr) = _mintPosition(
-            address(wpol),
-            address(synr),
-            desiredPolSynr,
-            desiredPolSynr,
-            -3_000,
-            3_000
-        );
-
         uint256 ignoredCrossUsed;
-        (synaSynrPool, lastSynaSynrPositionId, ignoredCrossUsed) = _mintPosition(
-            address(syna),
-            address(synr),
-            crossAmount,
-            crossAmount,
-            -3_600,
-            3_600
-        );
+
+        if (lastPolSynaPositionId == 0) {
+            (polSynaPool, lastPolSynaPositionId, polUsedSyna) = _mintPosition(
+                address(wpol),
+                address(syna),
+                desiredPolSyna,
+                desiredPolSyna,
+                -2_400,
+                2_400
+            );
+            (polSynrPool, lastPolSynrPositionId, polUsedSynr) = _mintPosition(
+                address(wpol),
+                address(synr),
+                desiredPolSynr,
+                desiredPolSynr,
+                -3_000,
+                3_000
+            );
+            (synaSynrPool, lastSynaSynrPositionId, ignoredCrossUsed) = _mintPosition(
+                address(syna),
+                address(synr),
+                crossAmount,
+                crossAmount,
+                -3_600,
+                3_600
+            );
+        } else {
+            polUsedSyna = _increasePosition(
+                lastPolSynaPositionId,
+                address(wpol),
+                address(syna),
+                desiredPolSyna,
+                desiredPolSyna
+            );
+            polUsedSynr = _increasePosition(
+                lastPolSynrPositionId,
+                address(wpol),
+                address(synr),
+                desiredPolSynr,
+                desiredPolSynr
+            );
+            ignoredCrossUsed = _increasePosition(
+                lastSynaSynrPositionId,
+                address(syna),
+                address(synr),
+                crossAmount,
+                crossAmount
+            );
+        }
         ignoredCrossUsed;
 
         anchorPoolPolSyna += polUsedSyna;
@@ -231,9 +267,7 @@ contract TriangularLiquidityEngineV4 {
             token1,
             SQRT_PRICE_X96_ONE
         );
-
-        IERC20(token0).forceApprove(address(positionManager), amount0);
-        IERC20(token1).forceApprove(address(positionManager), amount1);
+        _approvePair(token0, token1, amount0, amount1);
 
         uint256 used0;
         uint256 used1;
@@ -251,7 +285,44 @@ contract TriangularLiquidityEngineV4 {
                 deadline: block.timestamp
             })
         );
-
         amountAUsed = tokenA == token0 ? used0 : used1;
+    }
+
+    function _increasePosition(
+        uint256 tokenId,
+        address tokenA,
+        address tokenB,
+        uint256 amountA,
+        uint256 amountB
+    ) private returns (uint256 amountAUsed) {
+        (address token0, address token1, uint256 amount0, uint256 amount1) =
+            tokenA < tokenB
+                ? (tokenA, tokenB, amountA, amountB)
+                : (tokenB, tokenA, amountB, amountA);
+        _approvePair(token0, token1, amount0, amount1);
+
+        uint256 used0;
+        uint256 used1;
+        (, used0, used1) = positionManager.increaseLiquidity(
+            IQuickSwapV3PositionManagerV4.IncreaseLiquidityParams({
+                tokenId: tokenId,
+                amount0Desired: amount0,
+                amount1Desired: amount1,
+                amount0Min: 0,
+                amount1Min: 0,
+                deadline: block.timestamp
+            })
+        );
+        amountAUsed = tokenA == token0 ? used0 : used1;
+    }
+
+    function _approvePair(
+        address token0,
+        address token1,
+        uint256 amount0,
+        uint256 amount1
+    ) private {
+        IERC20(token0).forceApprove(address(positionManager), amount0);
+        IERC20(token1).forceApprove(address(positionManager), amount1);
     }
 }

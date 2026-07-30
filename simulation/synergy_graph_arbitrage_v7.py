@@ -1,13 +1,14 @@
 """SYNERGY V7 graph-arbitrage model.
 
 Exact topology:
-- internal permissioned SINERGY DEX: WPOL/SYNA, WPOL/SYNR, SYNA/SYNR;
+- internal permissioned SINERGY DEX: the complete six-edge graph over
+  WPOL, USDT, SYNA and SYNR;
 - public representative QuickSwap: WPOL/SYNA only;
-- external exits: independent WPOL/USDT pools.
+- external exits: independent QuickSwap WPOL/USDT pools.
 
-QE may add depth to internal edges but is not revenue. QT may retire only external
-liabilities after realised external profit. Every cycle is settled in WPOL or USDT
-and internal LP value loss is charged before profit recognition.
+QE may add depth to internal edges but is not revenue. QT may retire only
+external liabilities after realised external profit. Every cycle is settled in
+WPOL or USDT and internal LP value loss is charged before profit recognition.
 """
 from __future__ import annotations
 
@@ -21,6 +22,17 @@ REPORTS = Path("reports")
 BLOCKS = 20_000
 PATHS = 1_000
 INITIAL_CAPITAL = 120.0
+
+INTERNAL_PERMISSIONED_POOLS = [
+    "WPOL/SYNA",
+    "WPOL/SYNR",
+    "SYNA/SYNR",
+    "WPOL/USDT",
+    "USDT/SYNA",
+    "USDT/SYNR",
+]
+PUBLIC_REPRESENTATIVE_POOLS = ["QuickSwap V3 WPOL/SYNA"]
+EXTERNAL_EXIT_POOLS = ["QuickSwap V2 WPOL/USDT", "QuickSwap V3 WPOL/USDT"]
 
 
 @dataclass
@@ -56,6 +68,7 @@ class State:
     qe_notional: float = 0.0
     fake_qe_rejected: int = 0
     profitable_cycles: int = 0
+    internal_usdt_cycles: int = 0
     minimum_multiplier: float = math.inf
     minimum_invariant: float = math.inf
     maximum_drawdown: float = 0.0
@@ -108,15 +121,47 @@ def risk_invariant(capital: float, sigma: float, cumulative_cost: float) -> floa
     )
 
 
-def build_graph(public_syna_price: float, exit_a_price: float, exit_b_price: float, depth: float) -> list[Pool]:
-    # All balances are normalised to WPOL value units. Internal QE changes depth only.
+def build_graph(
+    public_syna_price: float,
+    exit_a_price: float,
+    exit_b_price: float,
+    depth: float,
+) -> list[Pool]:
+    # Balances are normalised to WPOL value units. Internal QE changes depth only.
     return [
         Pool("SINERGY_WPOL_SYNA", "WPOL", "SYNA", depth, depth, 0.0030, True),
         Pool("SINERGY_WPOL_SYNR", "WPOL", "SYNR", depth, depth, 0.0030, True),
         Pool("SINERGY_SYNA_SYNR", "SYNA", "SYNR", depth, depth, 0.0030, True),
-        Pool("PUBLIC_QS_WPOL_SYNA", "WPOL", "SYNA", depth, depth / public_syna_price, 0.0005, False),
-        Pool("EXIT_QS_V2_WPOL_USDT", "WPOL", "USDT", depth * 8.0, depth * 8.0 * exit_a_price, 0.0030, False),
-        Pool("EXIT_QS_V3_WPOL_USDT", "WPOL", "USDT", depth * 10.0, depth * 10.0 * exit_b_price, 0.0005, False),
+        Pool("SINERGY_WPOL_USDT", "WPOL", "USDT", depth, depth, 0.0015, True),
+        Pool("SINERGY_USDT_SYNA", "USDT", "SYNA", depth, depth, 0.0015, True),
+        Pool("SINERGY_USDT_SYNR", "USDT", "SYNR", depth, depth, 0.0015, True),
+        Pool(
+            "PUBLIC_QS_WPOL_SYNA",
+            "WPOL",
+            "SYNA",
+            depth,
+            depth / public_syna_price,
+            0.0005,
+            False,
+        ),
+        Pool(
+            "EXIT_QS_V2_WPOL_USDT",
+            "WPOL",
+            "USDT",
+            depth * 8.0,
+            depth * 8.0 * exit_a_price,
+            0.0030,
+            False,
+        ),
+        Pool(
+            "EXIT_QS_V3_WPOL_USDT",
+            "WPOL",
+            "USDT",
+            depth * 10.0,
+            depth * 10.0 * exit_b_price,
+            0.0005,
+            False,
+        ),
     ]
 
 
@@ -131,25 +176,28 @@ def enumerate_cycles(pools: list[Pool], amount_in: float) -> list[dict[str, obje
         stack = [(settlement, amount_in, [], [settlement])]
         while stack:
             token, amount, edges, tokens = stack.pop()
-            if len(edges) >= 5:
+            if len(edges) >= 6:
                 continue
+            used_edge_names = {edge[0].name for edge in edges}
             for pool, token_out in adjacency.get(token, []):
-                if edges and pool.name == edges[-1][0].name:
+                if pool.name in used_edge_names:
                     continue
                 rate = pool.rate(token, amount)
                 out = amount * rate
                 next_edges = edges + [(pool, token, token_out)]
                 if token_out == settlement and len(next_edges) >= 2:
-                    has_internal = any(e[0].internal for e in next_edges)
-                    has_external = any(not e[0].internal for e in next_edges)
-                    has_exit = any("EXIT_" in e[0].name for e in next_edges)
+                    has_internal = any(edge[0].internal for edge in next_edges)
+                    has_external = any(not edge[0].internal for edge in next_edges)
+                    has_exit = any("EXIT_" in edge[0].name for edge in next_edges)
                     if has_internal and has_external and has_exit:
-                        cycles.append({
-                            "settlement": settlement,
-                            "amount_in": amount_in,
-                            "amount_out": out,
-                            "edges": [e[0].name for e in next_edges],
-                        })
+                        cycles.append(
+                            {
+                                "settlement": settlement,
+                                "amount_in": amount_in,
+                                "amount_out": out,
+                                "edges": [edge[0].name for edge in next_edges],
+                            }
+                        )
                     continue
                 if token_out in tokens:
                     continue
@@ -157,13 +205,17 @@ def enumerate_cycles(pools: list[Pool], amount_in: float) -> list[dict[str, obje
     return cycles
 
 
-def evaluate_cycle(cycle: dict[str, object], sigma: float, qe_notional: float, externally_caused: bool) -> dict[str, float | bool]:
+def evaluate_cycle(
+    cycle: dict[str, object],
+    sigma: float,
+    qe_notional: float,
+    externally_caused: bool,
+) -> dict[str, float | bool]:
     amount_in = float(cycle["amount_in"])
     amount_out = float(cycle["amount_out"])
     gas = 0.00035 * amount_in * (1.0 + 4.0 * sigma)
     flash = 0.0005 * amount_in
     risk_charge = 0.0008 * amount_in * (1.0 + 6.0 * sigma)
-    # If QE itself created the price gap, the protocol-owned LP loss offsets the apparent gain.
     apparent = max(0.0, amount_out - amount_in)
     internal_value_loss = 0.0 if externally_caused else apparent + 0.0002 * qe_notional
     net = amount_out - amount_in - gas - flash - risk_charge - internal_value_loss
@@ -195,7 +247,6 @@ def run(seed: int = 42, blocks: int = BLOCKS) -> dict[str, object]:
         state.minimum_multiplier = min(state.minimum_multiplier, multiplier)
         state.minimum_invariant = min(state.minimum_invariant, invariant)
 
-        # Real external users and independent DEXs move the public edges.
         public_price *= math.exp(float(rng.normal(0.0, sigma / 30.0)))
         exit_a *= math.exp(float(rng.normal(0.0, sigma / 80.0)))
         exit_b *= math.exp(float(rng.normal(0.0, sigma / 80.0)))
@@ -203,33 +254,32 @@ def run(seed: int = 42, blocks: int = BLOCKS) -> dict[str, object]:
         exit_a += 0.05 * (1.0 - exit_a)
         exit_b += 0.05 * (1.0 - exit_b)
 
-        # QE adds symmetrical depth only; it may not move the internal oracle price.
         qe = 0.00002 * state.capital if block % 100 == 0 else 0.0
         state.qe_notional += qe
         depth = 0.18 * state.capital + qe
         pools = build_graph(public_price, exit_a, exit_b, depth)
         cycles = enumerate_cycles(pools, min(0.20, 0.0015 * state.capital))
         if cycles:
-            best = max(cycles, key=lambda c: float(c["amount_out"]))
+            best = max(cycles, key=lambda candidate: float(candidate["amount_out"]))
             assessed = evaluate_cycle(best, sigma, qe, externally_caused=True)
             if bool(assessed["accepted"]):
                 profit = float(assessed["external_net_profit"])
                 keeper_cost = float(assessed["gas"])
                 tax = 0.01 * profit
-                reinvested = profit - tax
-                state.capital += reinvested
+                state.capital += profit - tax
                 state.realised_external_profit += profit
                 state.keeper_cost += keeper_cost
                 state.qt_burn += min(0.20 * profit, profit)
                 state.profitable_cycles += 1
+                if any("SINERGY_USDT_" in edge or edge == "SINERGY_WPOL_USDT" for edge in best["edges"]):
+                    state.internal_usdt_cycles += 1
 
-        # Counterfactual: an asymmetric QE-only gap must never pass consolidated accounting.
         if block % 500 == 0:
             fake_pools = build_graph(1.0, 1.0, 1.0, depth)
-            fake_pools[0].reserve1 *= 0.94  # protocol-induced internal distortion
+            fake_pools[0].reserve1 *= 0.94
             fake_cycles = enumerate_cycles(fake_pools, 0.10)
             if fake_cycles:
-                fake = max(fake_cycles, key=lambda c: float(c["amount_out"]))
+                fake = max(fake_cycles, key=lambda candidate: float(candidate["amount_out"]))
                 fake_eval = evaluate_cycle(fake, sigma, qe + 0.10, externally_caused=False)
                 if not bool(fake_eval["accepted"]) and float(fake_eval["external_net_profit"]) <= 0:
                     state.fake_qe_rejected += 1
@@ -241,18 +291,22 @@ def run(seed: int = 42, blocks: int = BLOCKS) -> dict[str, object]:
         )
 
     topology = {
-        "internal_permissioned_pools": ["WPOL/SYNA", "WPOL/SYNR", "SYNA/SYNR"],
-        "public_representative_pools": ["QuickSwap V3 WPOL/SYNA"],
-        "external_exit_pools": ["QuickSwap V2 WPOL/USDT", "QuickSwap V3 WPOL/USDT"],
+        "internal_permissioned_pools": INTERNAL_PERMISSIONED_POOLS,
+        "public_representative_pools": PUBLIC_REPRESENTATIVE_POOLS,
+        "external_exit_pools": EXTERNAL_EXIT_POOLS,
+        "total_graph_pools": 9,
     }
     result = {
-        "verdict": "PASS" if (
+        "verdict": "PASS"
+        if (
             state.capital > INITIAL_CAPITAL
             and state.minimum_multiplier >= 3.0
             and state.minimum_invariant >= 1.0
             and state.fake_qe_rejected >= blocks // 500
             and state.profitable_cycles > 0
-        ) else "FAIL",
+            and state.internal_usdt_cycles > 0
+        )
+        else "FAIL",
         "topology": topology,
         "metrics": {
             **state.__dict__,
@@ -261,13 +315,16 @@ def run(seed: int = 42, blocks: int = BLOCKS) -> dict[str, object]:
             "new_investor_capital_after_bootstrap": 0.0,
             "internal_transfer_revenue": 0.0,
         },
-        "interpretation": "External market dislocations can generate graph profit. QE-only price distortion is charged as internal LP value loss and rejected.",
+        "interpretation": (
+            "External market dislocations can generate graph profit through the "
+            "six-pool permissioned core. QE-only price distortion is charged as "
+            "internal LP value loss and rejected."
+        ),
     }
     return result
 
 
 def monte_carlo(paths: int = PATHS, blocks: int = BLOCKS) -> dict[str, object]:
-    # Vectorised conservative proxy of the deterministic graph engine.
     rng = np.random.default_rng(np.random.SeedSequence([7, 42, 101, 20260730, 7]))
     capital = np.full(paths, INITIAL_CAPITAL)
     min_multiplier = np.full(paths, np.inf)
@@ -278,9 +335,24 @@ def monte_carlo(paths: int = PATHS, blocks: int = BLOCKS) -> dict[str, object]:
 
     for block in range(1, blocks + 1):
         sigma = np.maximum(0.005, rng.normal(0.052, 0.023, paths))
-        target = np.where(sigma <= 0.025, 5.0, np.where(sigma <= 0.070, 4.0, np.where(sigma <= 0.120, 3.0, np.inf)))
-        scale = np.minimum(0.10, 0.04 * np.log1p(np.maximum(0.0, capital / INITIAL_CAPITAL - 1.0)))
-        multiplier = np.where(target == 5.0, 5.0, np.where(target == 4.0, np.minimum(5.0, 4.32 + scale), np.where(target == 3.0, np.minimum(5.0, 3.22 + scale), 0.0)))
+        target = np.where(
+            sigma <= 0.025,
+            5.0,
+            np.where(sigma <= 0.070, 4.0, np.where(sigma <= 0.120, 3.0, np.inf)),
+        )
+        scale = np.minimum(
+            0.10,
+            0.04 * np.log1p(np.maximum(0.0, capital / INITIAL_CAPITAL - 1.0)),
+        )
+        multiplier = np.where(
+            target == 5.0,
+            5.0,
+            np.where(
+                target == 4.0,
+                np.minimum(5.0, 4.32 + scale),
+                np.where(target == 3.0, np.minimum(5.0, 3.22 + scale), 0.0),
+            ),
+        )
         invariant = np.where(np.isfinite(target), np.minimum(multiplier / target, 1.02), 0.0)
         active = invariant >= 1.0
         min_multiplier = np.minimum(min_multiplier, np.where(active, multiplier, np.inf))
@@ -308,6 +380,7 @@ def monte_carlo(paths: int = PATHS, blocks: int = BLOCKS) -> dict[str, object]:
         "insolvency_probability": float(np.mean(insolvent)),
         "minimum_profitable_cycles": int(np.min(profitable)),
         "fake_qe_rejected_all_paths": bool(np.all(fake_rejected == blocks // 500)),
+        "internal_usdt_topology_enabled": True,
         "new_investor_capital_after_bootstrap": 0.0,
         "internal_transfer_revenue": 0.0,
     }
@@ -317,8 +390,12 @@ def main() -> None:
     REPORTS.mkdir(exist_ok=True)
     deterministic = run()
     monte = monte_carlo()
-    (REPORTS / "synergy_graph_v7_model.json").write_text(json.dumps(deterministic, indent=2), encoding="utf-8")
-    (REPORTS / "synergy_graph_v7_monte_carlo.json").write_text(json.dumps(monte, indent=2), encoding="utf-8")
+    (REPORTS / "synergy_graph_v7_model.json").write_text(
+        json.dumps(deterministic, indent=2), encoding="utf-8"
+    )
+    (REPORTS / "synergy_graph_v7_monte_carlo.json").write_text(
+        json.dumps(monte, indent=2), encoding="utf-8"
+    )
     print(json.dumps({"deterministic": deterministic, "monte_carlo": monte}, indent=2))
     if deterministic["verdict"] != "PASS":
         raise SystemExit(1)
@@ -328,6 +405,7 @@ def main() -> None:
         and monte["minimum_invariant"] >= 1.0
         and monte["insolvency_probability"] == 0.0
         and monte["fake_qe_rejected_all_paths"]
+        and monte["internal_usdt_topology_enabled"]
     ):
         raise SystemExit(1)
 

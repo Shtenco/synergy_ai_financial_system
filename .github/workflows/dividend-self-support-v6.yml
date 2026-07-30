@@ -1,0 +1,80 @@
+name: SYNERGY V6 Dividend Self-Support
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  synergy-v6-self-support:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      FORK_BLOCK_NUMBER: "90790000"
+      LOCAL_FORK_URL: "http://127.0.0.1:8545"
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          python -m pip install --upgrade numpy
+
+      - name: Patch reserved Solidity identifier
+        run: perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
+
+      - name: Compile V6 contracts
+        run: npx hardhat compile
+
+      - name: Run 20000-block and 1000x20000 V6 model
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python simulation/dividend_self_support_v6.py 2>&1 | tee reports/dividend-self-support-v6-model.log
+
+      - name: Start Polygon fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          anvil --fork-url "$POLYGON_RPC_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --chain-id 137 --hardfork shanghai --host 127.0.0.1 --port 8545 > reports/dividend-self-support-v6-anvil.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -s "$LOCAL_FORK_URL" -H 'content-type: application/json' --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' | grep -q '0x89'; then exit 0; fi
+            sleep 1
+          done
+          cat reports/dividend-self-support-v6-anvil.log
+          exit 1
+
+      - name: Run V6 no-new-capital Polygon fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/dividend_self_support_v6_polygon_fork.js --network polygonFork 2>&1 | tee reports/dividend-self-support-v6-polygon-fork.log
+
+      - name: Validate V6 self-support invariant
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_dividend_self_support_v6.py 2>&1 | tee reports/dividend-self-support-v6-verdict.log
+
+      - name: Upload V6 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v6-dividend-self-support-evidence
+          path: reports/*
+          if-no-files-found: warn

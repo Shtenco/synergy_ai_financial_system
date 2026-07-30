@@ -28,4 +28,11 @@ contract SynergyTopologyV7Harness is SynergyTopologyV7 {
         if (synaAmount > 0) syna.mint(to, synaAmount);
         if (synrAmount > 0) synr.mint(to, synrAmount);
     }
+
+    function setRepresentativeInfrastructure(address account, bool enabled)
+        external
+        onlyAdmin
+    {
+        syna.setInfrastructure(account, enabled);
+    }
 }

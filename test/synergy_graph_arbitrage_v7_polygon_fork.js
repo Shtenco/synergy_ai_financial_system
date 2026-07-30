@@ -68,7 +68,10 @@ async function fundUsdtFromExternalPool(externalPool, recipient, amount) {
     externalPool,
     ethers.toBeHex(E("10"))
   ]);
-  const donor = await ethers.getSigner(externalPool);
+  const directProvider = new ethers.JsonRpcProvider(
+    process.env.LOCAL_FORK_URL || "http://127.0.0.1:8545"
+  );
+  const donor = await directProvider.getSigner(externalPool);
   const usdtFromPool = new ethers.Contract(USDT, ERC20_ABI, donor);
   await (await usdtFromPool.transfer(recipient, amount)).wait();
   await network.provider.send("anvil_stopImpersonatingAccount", [externalPool]);

@@ -1,4 +1,4 @@
-"""Run the V7 model with hybrid routes that may revisit WPOL through distinct edges."""
+"""Run V7 with hybrid routes through the six-pool SINERGY permissioned core."""
 from pathlib import Path
 import json
 import math
@@ -13,7 +13,7 @@ def execute_route(pools, amount, route):
     current = amount
     edges = []
     for pool_name, token_in in route:
-        pool = next(p for p in pools if p.name == pool_name)
+        pool = next(pool for pool in pools if pool.name == pool_name)
         rate = pool.rate(token_in, current)
         if rate <= 0:
             return None
@@ -28,24 +28,38 @@ def execute_route(pools, amount, route):
 
 
 def best_hybrid_cycle(pools, amount):
-    # Re-visiting WPOL is required: USDT -> WPOL -> SYNA -> WPOL -> USDT.
     routes = [
+        # New direct stable route: USDT enters the permissioned core before
+        # reaching the protected public representative edge.
+        [
+            ("SINERGY_USDT_SYNA", "USDT"),
+            ("PUBLIC_QS_WPOL_SYNA", "SYNA"),
+            ("EXIT_QS_V3_WPOL_USDT", "WPOL"),
+        ],
+        # The original edge-simple route may revisit WPOL through distinct pools.
         [
             ("EXIT_QS_V3_WPOL_USDT", "USDT"),
             ("SINERGY_WPOL_SYNA", "WPOL"),
             ("PUBLIC_QS_WPOL_SYNA", "SYNA"),
             ("EXIT_QS_V2_WPOL_USDT", "WPOL"),
         ],
+        # Internal stable anchor plus representative pool.
         [
-            ("EXIT_QS_V2_WPOL_USDT", "USDT"),
+            ("SINERGY_WPOL_USDT", "USDT"),
             ("PUBLIC_QS_WPOL_SYNA", "WPOL"),
-            ("SINERGY_WPOL_SYNA", "SYNA"),
-            ("EXIT_QS_V3_WPOL_USDT", "WPOL"),
+            ("SINERGY_USDT_SYNA", "SYNA"),
+        ],
+        # Reserve-token path proves USDT/SYNR is a usable internal edge.
+        [
+            ("SINERGY_USDT_SYNR", "USDT"),
+            ("SINERGY_WPOL_SYNR", "SYNR"),
+            ("PUBLIC_QS_WPOL_SYNA", "WPOL"),
+            ("SINERGY_USDT_SYNA", "SYNA"),
         ],
     ]
     candidates = [execute_route(pools, amount, route) for route in routes]
-    candidates = [c for c in candidates if c is not None]
-    return max(candidates, key=lambda c: c["amount_out"]) if candidates else None
+    candidates = [candidate for candidate in candidates if candidate is not None]
+    return max(candidates, key=lambda candidate: candidate["amount_out"]) if candidates else None
 
 
 def run(seed=42, blocks=core.BLOCKS):
@@ -72,7 +86,6 @@ def run(seed=42, blocks=core.BLOCKS):
         exit_a += 0.045 * (1.0 - exit_a)
         exit_b += 0.045 * (1.0 - exit_b)
 
-        # Periodic outside order-flow shock, not a protocol trade.
         if block % 250 == 0:
             public_price *= 1.035
             exit_a *= 1.012
@@ -93,9 +106,13 @@ def run(seed=42, blocks=core.BLOCKS):
                 state.keeper_cost += float(assessed["gas"])
                 state.qt_burn += 0.20 * profit
                 state.profitable_cycles += 1
+                if any(
+                    edge == "SINERGY_WPOL_USDT" or "SINERGY_USDT_" in edge
+                    for edge in candidate["edges"]
+                ):
+                    state.internal_usdt_cycles += 1
 
         if block % 500 == 0:
-            # A protocol-induced 5% apparent gain is fully offset by internal LP loss.
             fake = {
                 "settlement": "WPOL",
                 "amount_in": 0.10,
@@ -113,17 +130,21 @@ def run(seed=42, blocks=core.BLOCKS):
         )
 
     result = {
-        "verdict": "PASS" if (
+        "verdict": "PASS"
+        if (
             state.capital > core.INITIAL_CAPITAL
             and state.minimum_multiplier >= 3.0
             and state.minimum_invariant >= 1.0
             and state.fake_qe_rejected == blocks // 500
             and state.profitable_cycles > 0
-        ) else "FAIL",
+            and state.internal_usdt_cycles > 0
+        )
+        else "FAIL",
         "topology": {
-            "internal_permissioned_pools": ["WPOL/SYNA", "WPOL/SYNR", "SYNA/SYNR"],
-            "public_representative_pools": ["QuickSwap V3 WPOL/SYNA"],
-            "external_exit_pools": ["QuickSwap V2 WPOL/USDT", "QuickSwap V3 WPOL/USDT"],
+            "internal_permissioned_pools": core.INTERNAL_PERMISSIONED_POOLS,
+            "public_representative_pools": core.PUBLIC_REPRESENTATIVE_POOLS,
+            "external_exit_pools": core.EXTERNAL_EXIT_POOLS,
+            "total_graph_pools": 9,
         },
         "metrics": {
             **state.__dict__,
@@ -132,7 +153,10 @@ def run(seed=42, blocks=core.BLOCKS):
             "new_investor_capital_after_bootstrap": 0.0,
             "internal_transfer_revenue": 0.0,
         },
-        "interpretation": "Hybrid routes may revisit WPOL through different pools. Only externally caused dislocations pass consolidated accounting.",
+        "interpretation": (
+            "Hybrid routes use the complete permissioned WPOL/USDT/SYNA/SYNR core. "
+            "Only externally caused dislocations pass consolidated accounting."
+        ),
     }
     return result
 
@@ -141,8 +165,12 @@ def main():
     REPORTS.mkdir(exist_ok=True)
     deterministic = run()
     monte = core.monte_carlo()
-    (REPORTS / "synergy_graph_v7_model.json").write_text(json.dumps(deterministic, indent=2), encoding="utf-8")
-    (REPORTS / "synergy_graph_v7_monte_carlo.json").write_text(json.dumps(monte, indent=2), encoding="utf-8")
+    (REPORTS / "synergy_graph_v7_model.json").write_text(
+        json.dumps(deterministic, indent=2), encoding="utf-8"
+    )
+    (REPORTS / "synergy_graph_v7_monte_carlo.json").write_text(
+        json.dumps(monte, indent=2), encoding="utf-8"
+    )
     print(json.dumps({"deterministic": deterministic, "monte_carlo": monte}, indent=2))
     if deterministic["verdict"] != "PASS":
         raise SystemExit(1)
@@ -152,6 +180,7 @@ def main():
         and monte["minimum_invariant"] >= 1.0
         and monte["insolvency_probability"] == 0.0
         and monte["fake_qe_rejected_all_paths"]
+        and monte["internal_usdt_topology_enabled"]
     ):
         raise SystemExit(1)
 

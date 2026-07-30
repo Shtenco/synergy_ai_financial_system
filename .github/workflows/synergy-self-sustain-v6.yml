@@ -1,0 +1,84 @@
+name: SYNERGY V6 Zero New Capital Self Sustain
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  self-sustain-v6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      FORK_BLOCK_NUMBER: "90790000"
+      LOCAL_FORK_URL: "http://127.0.0.1:8545"
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install simulation dependencies
+        run: python -m pip install --upgrade numpy matplotlib
+
+      - name: Patch reserved Solidity identifier
+        run: perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
+
+      - name: Compile V6 contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          npx hardhat compile 2>&1 | tee reports/v6-compile.log
+
+      - name: Run zero-new-capital mathematical model
+        shell: bash
+        run: |
+          set -euo pipefail
+          python simulation/synergy_self_sustain_v6.py 2>&1 | tee reports/v6-model.log
+
+      - name: Start Polygon fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          anvil --fork-url "$POLYGON_RPC_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --chain-id 137 --hardfork shanghai --host 127.0.0.1 --port 8545 > reports/v6-anvil.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -s "$LOCAL_FORK_URL" -H 'content-type: application/json' --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' | grep -q '0x89'; then exit 0; fi
+            sleep 1
+          done
+          cat reports/v6-anvil.log
+          exit 1
+
+      - name: Run V6 Polygon-fork self-sustain proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/synergy_self_sustain_v6_polygon_fork.js --network polygonFork 2>&1 | tee reports/v6-polygon-fork.log
+
+      - name: Validate exact V6 invariant
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_synergy_self_sustain_v6.py 2>&1 | tee reports/v6-verdict.log
+
+      - name: Upload V6 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v6-zero-new-capital-evidence
+          path: reports/*
+          if-no-files-found: warn

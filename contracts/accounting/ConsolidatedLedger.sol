@@ -10,9 +10,9 @@ interface IERC20BalanceLedger {
     function balanceOf(address account) external view returns (uint256);
 }
 
-/// @notice Consolidated double-entry ledger. Internal transfers can never
-/// modify external PnL or NAV. External revenue requires a proven token balance
-/// delta and every sourceId can be consumed only once.
+/// @notice Consolidated double-entry ledger. Full records are emitted as events
+/// and committed into an append-only hash chain instead of storing a large
+/// struct per entry. Internal transfers never alter external PnL or NAV.
 contract ConsolidatedLedger {
     enum Classification {
         INTERNAL_TRANSFER,
@@ -30,27 +30,12 @@ contract ConsolidatedLedger {
         LOSS
     }
 
-    struct Entry {
-        address asset;
-        uint256 debit;
-        uint256 credit;
-        address from;
-        address to;
-        Classification classification;
-        bytes32 sourceId;
-        address externalCounterparty;
-        int256 liabilityDelta;
-        int256 realizedPnLDelta;
-        int256 navDelta;
-        uint64 timestamp;
-    }
-
     address public admin;
     ISystemBoundaryRegistryLedger public immutable registry;
     mapping(address => bool) public recorder;
     mapping(bytes32 => bool) public sourceUsed;
-    mapping(uint256 => Entry) public entries;
     uint256 public entryCount;
+    bytes32 public ledgerRoot;
 
     uint256 public internalTransferVolume;
     uint256 public cumulativeExternalRevenue;
@@ -77,13 +62,16 @@ contract ConsolidatedLedger {
         Classification indexed classification,
         bytes32 indexed sourceId,
         address asset,
-        uint256 amount,
+        uint256 debit,
+        uint256 credit,
         address from,
         address to,
         address externalCounterparty,
         int256 liabilityDelta,
         int256 realizedPnLDelta,
-        int256 navDelta
+        int256 navDelta,
+        bytes32 previousRoot,
+        bytes32 newRoot
     );
 
     constructor(address admin_, ISystemBoundaryRegistryLedger registry_) {
@@ -162,8 +150,6 @@ contract ConsolidatedLedger {
         );
     }
 
-    /// @notice Capital received against a matching external obligation. It is
-    /// neither revenue nor NAV growth.
     function recordCapitalInflowAndLiability(
         bytes32 sourceId,
         address asset,
@@ -222,8 +208,8 @@ contract ConsolidatedLedger {
         );
     }
 
-    /// @notice Atomic discounted redemption accounting. Paying 0.75 reserve
-    /// units to retire a 1.00 reserve-unit liability realizes +0.25 PnL.
+    /// @notice Paying less cash than the stress value of a retired external
+    /// liability realizes the discount as external PnL.
     function recordDiscountedLiabilityRedemption(
         bytes32 sourceId,
         address asset,
@@ -395,32 +381,40 @@ contract ConsolidatedLedger {
         if (sourceUsed[sourceId]) revert SourceAlreadyUsed();
         sourceUsed[sourceId] = true;
         id = entryCount++;
-        entries[id] = Entry({
-            asset: asset,
-            debit: amount,
-            credit: amount,
-            from: from,
-            to: to,
-            classification: classification,
-            sourceId: sourceId,
-            externalCounterparty: externalCounterparty,
-            liabilityDelta: liabilityDelta,
-            realizedPnLDelta: pnlDelta,
-            navDelta: navDelta,
-            timestamp: uint64(block.timestamp)
-        });
+        bytes32 previousRoot = ledgerRoot;
+        bytes32 leaf = keccak256(
+            abi.encode(
+                id,
+                classification,
+                sourceId,
+                asset,
+                amount,
+                amount,
+                from,
+                to,
+                externalCounterparty,
+                liabilityDelta,
+                pnlDelta,
+                navDelta,
+                block.timestamp
+            )
+        );
+        ledgerRoot = keccak256(abi.encodePacked(previousRoot, leaf));
         emit EntryRecorded(
             id,
             classification,
             sourceId,
             asset,
             amount,
+            amount,
             from,
             to,
             externalCounterparty,
             liabilityDelta,
             pnlDelta,
-            navDelta
+            navDelta,
+            previousRoot,
+            ledgerRoot
         );
     }
 }

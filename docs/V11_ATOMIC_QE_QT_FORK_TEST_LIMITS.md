@@ -1,0 +1,1 @@
+Known scope limits: the fork proof uses one internal SYNA/USDT pool and a real QuickSwap V3->V2 external route on a pinned historical block. It does not prove continuous opportunity, full ten-pool production routing, formal security, oracle correctness, governance safety, or legal compliance.

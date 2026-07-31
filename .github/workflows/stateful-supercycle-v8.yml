@@ -21,6 +21,7 @@ jobs:
           base64 --decode .github/stateful_supercycle_v8_bundle.b64 | tar -xzf -
           test -f contracts/supercycle/StatefulSupercycleV8.sol
           test -f test/stateful_supercycle_v8_100_cycles.js
+          test -f simulation_stateful_supercycle_v8.py
 
       - uses: actions/setup-node@v4
         with:
@@ -36,6 +37,15 @@ jobs:
           npm ci
           python -m pip install --upgrade pandas matplotlib
 
+      - name: Run integer-exact shadow preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python simulation_stateful_supercycle_v8.py 2>&1 | tee reports/stateful_supercycle_v8_shadow_preflight.log
+          python scripts/validate_stateful_supercycle_v8_shadow.py 2>&1 | tee reports/stateful_supercycle_v8_shadow_validator.log
+          python scripts/plot_stateful_supercycle_v8_shadow.py
+
       - name: Compile V8 contracts
         run: npx hardhat compile
 
@@ -43,13 +53,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p reports
           npx hardhat test test/stateful_supercycle_v8_100_cycles.js 2>&1 | tee reports/stateful_supercycle_v8_evm.log
 
-      - name: Independently validate every stage and invariant
+      - name: Independently validate every EVM stage and invariant
         run: python scripts/validate_stateful_supercycle_v8.py | tee reports/stateful_supercycle_v8_validator.log
 
-      - name: Render stateful evidence charts
+      - name: Prove integer-shadow versus EVM parity
+        run: python scripts/compare_stateful_supercycle_v8_shadow_evm.py | tee reports/stateful_supercycle_v8_shadow_evm_parity.log
+
+      - name: Render EVM evidence charts
         run: python scripts/plot_stateful_supercycle_v8.py
 
       - name: Upload complete V8 evidence

@@ -1,0 +1,61 @@
+name: SYNERGY V8 Stateful Supercycle
+
+on:
+  pull_request:
+    branches: [audit/synergy-qe-polygon-fork]
+  workflow_dispatch:
+
+jobs:
+  stateful-supercycle-v8:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      SUPERCYCLE_COUNT: "100"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Materialize reviewed V8 source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode .github/stateful_supercycle_v8_bundle.b64 | tar -xzf -
+          test -f contracts/supercycle/StatefulSupercycleV8.sol
+          test -f test/stateful_supercycle_v8_100_cycles.js
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          python -m pip install --upgrade pandas matplotlib
+
+      - name: Compile V8 contracts
+        run: npx hardhat compile
+
+      - name: Run 100-cycle stateful EVM super-cycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          npx hardhat test test/stateful_supercycle_v8_100_cycles.js 2>&1 | tee reports/stateful_supercycle_v8_evm.log
+
+      - name: Independently validate every stage and invariant
+        run: python scripts/validate_stateful_supercycle_v8.py | tee reports/stateful_supercycle_v8_validator.log
+
+      - name: Render stateful evidence charts
+        run: python scripts/plot_stateful_supercycle_v8.py
+
+      - name: Upload complete V8 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v8-stateful-supercycle-evidence
+          path: reports/*
+          if-no-files-found: error

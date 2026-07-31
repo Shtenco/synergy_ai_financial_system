@@ -1,0 +1,70 @@
+name: SYNERGY Atomic Flash V9 Live Test
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/v9_atomic_test_bundle.b64"
+      - ".github/workflows/synergy-atomic-flash-v9-live-test.yml"
+  workflow_dispatch:
+
+jobs:
+  hardhat-atomic-v9:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Materialize V9 test bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d .github/v9_atomic_test_bundle.b64 > /tmp/v9bundle.tar.gz
+          echo "854bb6215930ee320c4774d7d5ab720d72e330e4d9776187dd905f2b39a2dace  /tmp/v9bundle.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/v9bundle.tar.gz -C .
+          test -f contracts/flash/SynergyAtomicFlashBatchV9.sol
+          test -f test/synergy_atomic_flash_batch_v9_unit.js
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile contracts
+        run: npx hardhat compile
+
+      - name: Run exact arithmetic regressions
+        run: |
+          mkdir -p reports
+          python simulation/atomic_flash_batch_v9_model.py --output reports/atomic_flash_batch_v9_model.json
+          python simulation/test_atomic_flash_batch_v9_model.py
+
+      - name: Run complete atomic V9 Hardhat suite
+        run: npx hardhat test test/synergy_atomic_flash_batch_v9_unit.js
+
+      - name: Assert requested rejection tests executed
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f reports/synergy_atomic_flash_batch_v9_unit.json
+          python - <<'PY'
+          import json
+          p='reports/synergy_atomic_flash_batch_v9_unit.json'
+          data=json.load(open(p, encoding='utf-8'))
+          assert data.get('removeFailureAtomicRevert') is True, data
+          assert data.get('repeatedEdgeRejected') is True, data
+          print('Atomic REMOVE failure test: PASS')
+          print('Repeated-edge rejection test: PASS')
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-atomic-flash-v9-live-test-evidence
+          path: |
+            reports/synergy_atomic_flash_batch_v9_unit.json
+            reports/atomic_flash_batch_v9_model.json
+          if-no-files-found: warn

@@ -1,28 +1,42 @@
 # SYNERGY V8 Stateful EVM Supercycle
 
-This branch adds a deterministic, persistent 100-cycle EVM acceptance test for the complete sequence:
+This branch implements a persistent 100-cycle acceptance harness for:
 
 `FLASH GRAPH -> V6 REINVEST -> BACKED QE -> QT -> BUYBACK -> BURN -> LP REBALANCE -> PRICE DISPERSION -> NEXT FLASH GRAPH`.
 
-The reviewed source bundle is stored in `.github/stateful_supercycle_v8_bundle.b64` and is materialized by CI before compilation. It contains:
+No fixture reset is allowed. Eight CPMM pools, ERC-20 balances, SYN supply, external liabilities, backing, protocol inventory, policy reserves, cumulative flows and next-cycle price dispersion survive from one cycle to the next.
 
-- `contracts/supercycle/StatefulSupercycleV8.sol`;
-- `test/stateful_supercycle_v8_100_cycles.js`;
-- independent Python validator and evidence plotter;
-- Russian technical documentation and the acceptance matrix.
+## Correct external-value accounting
 
-The test preserves all balances and state between cycles: eight CPMM reserve pairs, ERC-20 balances, SYN supply, liabilities, backing reserve, protocol inventory, policy buffers, cumulative external revenue, QE/QT/buyback/burn/LP flows, and next-cycle price dispersion.
+SYN and SYNR have zero external asset value inside the protocol boundary. Flash routes are ranked by route-specific change in consolidated POL/USDT NAV, not by the final POL token balance. In particular, `POL -> external SYN -> internal USDT -> internal POL` is not treated as external profit because it can return protocol-owned internal reserves while sending flash principal outside the boundary. Actual execution must also satisfy `afterNAV >= beforeNAV`.
 
-Core acceptance gates are checked after every stage:
+## Productive backed QE
+
+BACKED QE is protocol-owned productive liquidity, not a gift of newly minted public liabilities. It:
+
+- mints only to the engine;
+- does not increase external liabilities;
+- reserves an equal amount of existing free external capital;
+- deploys that reserve into internal LP during `LP_REBALANCE`;
+- is bounded by fraction, epoch cap and 120% liquidity headroom.
+
+QT retires only pre-existing, voluntarily tendered liabilities. A consolidated-equity floor is checked after every stage.
+
+## Acceptance gates
 
 - internal transfer revenue equals zero;
 - `SYN supply = protocol inventory + external liabilities`;
 - backing is not below liabilities;
-- solvency, liquidity, and gas coverage are at least 120%;
+- consolidated equity is not below bootstrap equity;
+- solvency, liquidity and gas coverage are at least 120%;
 - reserve policy ratio is at least 70%;
-- buyback spend never exceeds the allocation sourced from realized external graph profit;
-- only the FLASH GRAPH stage may increase cumulative external revenue.
+- buyback spend does not exceed allocation from realised external graph profit;
+- only `FLASH GRAPH` may increase cumulative external revenue.
 
-The GitHub Actions artifact contains the full EVM log, JSON summary, 800-row stage trace, 100-row cycle trace, final pool reserves, independent validation verdict, and four evidence charts.
+## Two execution surfaces
 
-This is an economic architecture and accounting-continuity test. It does not claim that live mainnet price dispersion or flash liquidity will generate the same returns.
+CI first runs an integer-exact shadow using the same 18-decimal integer CPMM arithmetic, validates all 800 rows independently, and renders evidence charts. It then compiles Solidity 0.8.26, runs the 100-cycle Hardhat EVM test, independently validates the EVM trace and requires tight numerical shadow/EVM parity.
+
+The current integer-exact reference result has 100 cycles, 800 stages, 16 profitable flash cycles, zero internal revenue and an increase in consolidated equity from 30,000,000 to approximately 30,058,942 POL. This is not labelled an EVM PASS until GitHub Actions actually starts and completes the Solidity/Hardhat steps.
+
+The test establishes accounting continuity for a deterministic scenario. It does not promise live mainnet profitability, available flash liquidity, identical price dispersion, or production security without independent audit.

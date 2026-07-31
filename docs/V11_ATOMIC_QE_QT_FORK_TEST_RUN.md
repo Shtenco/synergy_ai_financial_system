@@ -1,0 +1,1 @@
+The fork workflow is intentionally isolated on the `test/v11-atomic-qe-qt-polygon-fork` branch. Evidence is emitted as `synergy-atomic-qe-qt-v11-polygon-fork-evidence` and includes the Anvil log, Hardhat test log, JSON result and strict validator verdict.

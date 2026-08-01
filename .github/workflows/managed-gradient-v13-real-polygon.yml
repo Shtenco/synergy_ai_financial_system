@@ -8,6 +8,7 @@ on:
       - "scripts/scan_polygon_50_pool_100_blocks.js"
       - "scripts/scan_managed_gradient_v14_stateful.js"
       - "scripts/patch_managed_gradient_v14_wallet_funding.py"
+      - "scripts/patch_managed_gradient_v14_fast_screen.py"
       - "scripts/validate_managed_gradient_v14_stateful.py"
       - "docs/V14_STRICT_STATEFUL_CLOSED_LOOP.md"
       - ".github/workflows/managed-gradient-v13-real-polygon.yml"
@@ -68,6 +69,7 @@ jobs:
         run: |
           python scripts/export_polygon_scanner_lib_v13.py
           python scripts/patch_managed_gradient_v14_wallet_funding.py
+          python scripts/patch_managed_gradient_v14_fast_screen.py
           node --check scripts/_polygon_scanner_lib_v13.js
           node --check scripts/scan_managed_gradient_v14_stateful.js
           python -m py_compile scripts/validate_managed_gradient_v14_stateful.py

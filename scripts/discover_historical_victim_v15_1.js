@@ -12,7 +12,6 @@ const MIN_AMOUNT_USDC = ethers.parseUnits(process.env.V151_MIN_VICTIM_USDC || "1
 const QS_V2_ROUTER = "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff";
 const USDC = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
 const WPOL = "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270";
-const WETH = "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619";
 
 const routerInterface = new ethers.Interface([
   "function swapExactTokensForTokens(uint256 amountIn,uint256 amountOutMin,address[] path,address to,uint256 deadline)",
@@ -57,7 +56,7 @@ async function main() {
         amountIn < MIN_AMOUNT_USDC
           || swapPath.length !== 2
           || normalize(swapPath[0]) !== normalize(USDC)
-          || ![normalize(WPOL), normalize(WETH)].includes(normalize(swapPath[1]))
+          || normalize(swapPath[1]) !== normalize(WPOL)
       ) continue;
 
       const receipt = await provider.getTransactionReceipt(tx.hash);
@@ -96,6 +95,7 @@ async function main() {
     scanStartBlock: START_BLOCK,
     scanEndBlock: END_BLOCK,
     minimumVictimUsdc: Number(ethers.formatUnits(MIN_AMOUNT_USDC, 6)),
+    requiredPath: [USDC, WPOL],
     candidateCount: candidates.length,
     selected: candidates[0] || null,
     candidates: candidates.slice(0, 25)

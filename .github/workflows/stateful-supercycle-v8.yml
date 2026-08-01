@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [audit/synergy-qe-polygon-fork]
     paths:
+      - "hardhat.config.js"
       - "contracts/supercycle/StatefulSupercycleV8.sol"
       - "contracts/fork/SynergyAtomicQeQtCycleV11.sol"
       - "contracts/OrderflowAuction.sol"
@@ -73,7 +74,7 @@ jobs:
             --fork-url "$POLYGON_RPC_URL" \
             --fork-block-number "$FORK_BLOCK_NUMBER" \
             --chain-id 137 \
-            --hardfork shanghai \
+            --hardfork cancun \
             --host 127.0.0.1 \
             --port 8545 \
             > reports/stateful_supercycle_v8_10x10_anvil.log 2>&1 &
@@ -143,21 +144,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p reports
           perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
           node --check test/external_revenue_v15_polygon_fork.js
           python -m py_compile scripts/validate_external_revenue_v15.py
-          npx hardhat compile
+          npx hardhat compile 2>&1 | tee reports/v15_external_revenue_compile.log
 
       - name: Start V15 pinned Polygon fork
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p reports
           anvil \
             --fork-url "$POLYGON_RPC_URL" \
             --fork-block-number "$FORK_BLOCK_NUMBER" \
             --chain-id 137 \
-            --hardfork shanghai \
+            --hardfork cancun \
             --host 127.0.0.1 \
             --port 8545 \
             > reports/v15_external_revenue_anvil.log 2>&1 &

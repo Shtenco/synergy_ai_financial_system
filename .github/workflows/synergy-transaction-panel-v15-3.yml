@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [audit/synergy-qe-polygon-fork]
     paths:
+      - "package.json"
       - "economics/v15_3_transaction_panel_spec.json"
       - "economics/v15_3_v14_empirical_prior.json"
       - "scripts/collect_polygon_transaction_panel_v15_3.js"
@@ -11,6 +12,7 @@ on:
       - "econometrics/estimate_transaction_panel_v15_3.py"
       - "scripts/validate_transaction_panel_v15_3.py"
       - "tests/test_transaction_panel_v15_3.py"
+      - "docs/V15_3_TRANSACTION_PANEL_AND_REAL_COEFFICIENTS.md"
       - "test/external_revenue_v15_1_historical_polygon_fork.js"
       - "contracts/v15_1/**"
       - ".github/workflows/synergy-transaction-panel-v15-3.yml"

@@ -1,10 +1,11 @@
-name: SYNERGY V9 Real Polygon 50-Pool 100-Block Edge Scan
+name: SYNERGY V10 Exhaustive Polygon 50-Pool 100-Block Edge Scan
 
 on:
   pull_request:
     branches: [audit/synergy-qe-polygon-fork]
     paths:
       - "scripts/scan_polygon_50_pool_100_blocks.js"
+      - "scripts/patch_polygon_scanner_v10.py"
       - "scripts/validate_polygon_50_pool_100_blocks.py"
       - "scripts/plot_polygon_50_pool_100_blocks.py"
       - ".github/workflows/polygon-50-pool-100-block-edge-scan.yml"
@@ -25,12 +26,12 @@ jobs:
       CONFIRMATIONS: "12"
       EXTERNAL_POOL_TARGET: "50"
       MAX_HOPS: "4"
-      TOP_APPROX_ROUTES: "3"
       INTERNAL_SYN_RESERVE: "5000"
       INTERNAL_USDT_RESERVE: "5000"
       INTERNAL_FEE_BPS: "30"
       FLASH_PREMIUM_BPS: "5"
       MIN_NET_PROFIT_USDT: "0.25"
+      MIN_ROUTE_POOL_TVL_USD: "5000"
       PRIORITY_FEE_GWEI: "30"
       QUOTE_SIZES_USDT: "50,100,250,500,1000"
       END_BLOCK: ${{ inputs.end_block }}
@@ -53,14 +54,10 @@ jobs:
           npm ci
           python -m pip install --upgrade matplotlib
 
-      - name: Normalize scanner for the public archive endpoint
+      - name: Apply exhaustive upper-bound scanner
         run: |
-          perl -0pi -e 's/ethers\.getAddress\(token\.address\)/ethers.getAddress(token.address.toLowerCase())/' \
-            scripts/scan_polygon_50_pool_100_blocks.js
-          perl -0pi -e 's/\{ staticNetwork: true \}/\{ staticNetwork: true, batchMaxCount: 1 \}/' \
-            scripts/scan_polygon_50_pool_100_blocks.js
-          perl -0pi -e 's/\.filter\(\(pool\) => pool\.tvlUsd > 100\)/.filter((pool) => pool.tvlUsd > 0)/' \
-            scripts/scan_polygon_50_pool_100_blocks.js
+          python scripts/patch_polygon_scanner_v10.py
+          node --check scripts/scan_polygon_50_pool_100_blocks.js
 
       - name: Scan 50 real DEX pools over 100 consecutive Polygon blocks
         shell: bash
@@ -70,7 +67,7 @@ jobs:
           node scripts/scan_polygon_50_pool_100_blocks.js \
             2>&1 | tee reports/polygon_50_pool_100_block_scan.log
 
-      - name: Validate real-price evidence
+      - name: Validate exhaustive real-price evidence
         shell: bash
         run: |
           set -euo pipefail
@@ -84,6 +81,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: synergy-v9-real-polygon-50-pool-100-block-evidence
+          name: synergy-v10-exhaustive-polygon-50-pool-100-block-evidence
           path: reports/*
           if-no-files-found: error

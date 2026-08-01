@@ -1,0 +1,146 @@
+name: SYNERGY V15.3 Self-Hosted Certification
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_block:
+        description: "First Polygon block in the panel"
+        required: false
+        default: "91250000"
+        type: string
+      end_block:
+        description: "Last Polygon block in the panel"
+        required: false
+        default: "91266308"
+        type: string
+      minimum_victim_usdc:
+        description: "Minimum actual victim notional"
+        required: false
+        default: "100"
+        type: string
+      maximum_raw_rows:
+        description: "Maximum raw transactions"
+        required: false
+        default: "250"
+        type: string
+      replay_limit:
+        description: "Fresh-fork replay count; must be at least 30"
+        required: false
+        default: "40"
+        type: string
+
+concurrency:
+  group: synergy-v15-3-self-hosted-certification
+  cancel-in-progress: false
+
+jobs:
+  certify-transaction-panel:
+    runs-on: [self-hosted, linux, x64, synergy-v15]
+    timeout-minutes: 480
+    env:
+      POLYGON_RPC_URL: ${{ secrets.POLYGON_ARCHIVE_RPC_URL }}
+      V153_START_BLOCK: ${{ inputs.start_block }}
+      V153_END_BLOCK: ${{ inputs.end_block }}
+      V153_MIN_VICTIM_USDC: ${{ inputs.minimum_victim_usdc }}
+      V153_MAX_RAW_ROWS: ${{ inputs.maximum_raw_rows }}
+      V153_REPLAY_LIMIT: ${{ inputs.replay_limit }}
+      V153_ESTIMATION_SEED: "153"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Require archive Polygon RPC and certification sample
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$POLYGON_RPC_URL"
+          test "$V153_REPLAY_LIMIT" -ge 30
+          cast chain-id --rpc-url "$POLYGON_RPC_URL" | grep -qx '137'
+          cast block "$V153_START_BLOCK" --rpc-url "$POLYGON_RPC_URL" >/dev/null
+          cast block "$V153_END_BLOCK" --rpc-url "$POLYGON_RPC_URL" >/dev/null
+
+      - name: Install and validate sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          mkdir -p reports
+          node --check scripts/collect_polygon_transaction_panel_v15_3.js
+          python -m py_compile \
+            scripts/replay_transaction_panel_v15_3.py \
+            econometrics/estimate_transaction_panel_v15_3.py \
+            scripts/validate_transaction_panel_v15_3.py
+          python -m unittest tests/test_transaction_panel_v15_3.py -v \
+            2>&1 | tee reports/v15_3_self_hosted_unit.log
+          npx hardhat compile 2>&1 | tee reports/v15_3_self_hosted_compile.log
+
+      - name: Collect actual Polygon transactions
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run panel:v15.3:collect \
+            2>&1 | tee reports/v15_3_self_hosted_collect.log
+
+      - name: Execute at least 30 independent fresh-fork replays
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run panel:v15.3:replay \
+            2>&1 | tee reports/v15_3_self_hosted_replay.log
+
+      - name: Estimate transaction coefficients and holdout lower bounds
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run panel:v15.3:estimate \
+            2>&1 | tee reports/v15_3_self_hosted_estimate.log
+          npm run panel:v15.3:validate \
+            2>&1 | tee reports/v15_3_self_hosted_validate.log
+
+      - name: Enforce runner-certified empirical status
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          summary = json.loads(Path('reports/v15_3_transaction_panel_replay_summary.json').read_text())
+          model = json.loads(Path('reports/v15_3_transaction_coefficients.json').read_text())
+          verdict = json.loads(Path('reports/v15_3_strict_empirical_verdict.json').read_text())
+
+          valid = int(summary.get('validReplayRows', 0))
+          assert valid >= 30, f'runner certification requires >=30 valid replay rows, got {valid}'
+          assert model.get('empiricalStatus') == 'TRANSACTION_LEVEL_COEFFICIENTS_ESTIMATED'
+          assert verdict.get('verdict') == 'PASS'
+          assert verdict.get('empiricalStatus') == 'TRANSACTION_LEVEL_COEFFICIENTS_ESTIMATED'
+          print(json.dumps({
+              'runnerCertified': True,
+              'validReplayRows': valid,
+              'strictPassRows': summary.get('strictPassRows', 0),
+              'countedRevenueUsdc': model.get('holdoutEconomics', {}).get('countedNetProtocolRevenueUsdc', 0),
+              'reinvestedUsdc': model.get('holdoutEconomics', {}).get('reinvestedUsdc', 0),
+          }, indent=2))
+          PY
+
+      - name: Upload runner-certified evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v15-3-runner-certified-transaction-panel
+          path: reports/v15_3_*
+          if-no-files-found: error
+          compression-level: 6

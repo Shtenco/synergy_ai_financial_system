@@ -5,6 +5,7 @@ on:
     branches: [audit/synergy-qe-polygon-fork]
     paths:
       - "scripts/export_polygon_scanner_lib_v13.py"
+      - "scripts/patch_managed_gradient_v13_quote_cache.py"
       - "scripts/scan_managed_gradient_v13.js"
       - "scripts/validate_managed_gradient_v13.py"
       - "docs/REPOSITORY_WIDE_MANAGED_GRADIENT_AUDIT_V13.md"
@@ -54,9 +55,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build reusable real-Polygon scanner library
+      - name: Build and optimize reusable real-Polygon scanner
         run: |
           python scripts/export_polygon_scanner_lib_v13.py
+          python scripts/patch_managed_gradient_v13_quote_cache.py
           node --check scripts/_polygon_scanner_lib_v13.js
           node --check scripts/scan_managed_gradient_v13.js
 

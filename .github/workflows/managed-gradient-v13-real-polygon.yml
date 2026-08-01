@@ -34,7 +34,7 @@ jobs:
       MIN_ROUTE_POOL_TVL_USD: "5000"
       MIN_WALLET_PROFIT_USD: "0.01"
       MIN_NET_PROFIT_USD: "0.25"
-      TOP_WALLET_EXACT_PER_BLOCK: "12"
+      TOP_WALLET_EXACT_PER_BLOCK: "4"
       PRIORITY_FEE_GWEI: "30"
       END_BLOCK: ${{ inputs.end_block }}
       NODE_OPTIONS: "--max-old-space-size=6144"

@@ -61,7 +61,7 @@ contract PrivateRFQSettlementV151 is EIP712, ReentrancyGuard, IPrivateRFQSettlem
         emit NonceCancelled(msg.sender, nonce);
     }
 
-    function hashOrder(Order calldata order) public view returns (bytes32) {
+    function hashOrder(Order calldata order) public view override returns (bytes32) {
         bytes32 structHash = keccak256(
             abi.encode(
                 ORDER_TYPEHASH,
@@ -81,6 +81,7 @@ contract PrivateRFQSettlementV151 is EIP712, ReentrancyGuard, IPrivateRFQSettlem
 
     function fill(Order calldata order, bytes calldata signature)
         external
+        override
         nonReentrant
         returns (uint256 amountOut)
     {

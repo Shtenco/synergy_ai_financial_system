@@ -1,0 +1,88 @@
+name: SYNERGY V12 Self-Created Gradient Fork Probe
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "contracts/fork/SelfCreatedGradientProbeV12.sol"
+      - "test/self_created_gradient_v12_polygon_fork.js"
+      - "scripts/validate_self_created_gradient_v12.py"
+      - ".github/workflows/self-created-gradient-v12-fork.yml"
+  workflow_dispatch:
+
+jobs:
+  self-created-gradient-v12:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      FORK_BLOCK_NUMBER: "90790000"
+      LOCAL_FORK_URL: "http://127.0.0.1:8545"
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          python -m pip install --upgrade matplotlib
+
+      - name: Patch legacy reserved Solidity identifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
+
+      - name: Compile contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat compile
+
+      - name: Start pinned Polygon fork with no external shock
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          anvil --fork-url "$POLYGON_RPC_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --chain-id 137 --hardfork shanghai --host 127.0.0.1 --port 8545 > reports/self-gradient-anvil.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -s "$LOCAL_FORK_URL" -H 'content-type: application/json' --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' | grep -q '0x89'; then exit 0; fi
+            sleep 1
+          done
+          cat reports/self-gradient-anvil.log
+          exit 1
+
+      - name: Run self-created-gradient fork probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/self_created_gradient_v12_polygon_fork.js --network polygonFork 2>&1 | tee reports/self_created_gradient_v12_test.log
+
+      - name: Validate accounting and render PNG evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_self_created_gradient_v12.py 2>&1 | tee reports/self_created_gradient_v12_validator.log
+
+      - name: Upload fork evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v12-self-created-gradient-fork-evidence
+          path: reports/*
+          if-no-files-found: error

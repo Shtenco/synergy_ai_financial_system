@@ -53,6 +53,11 @@ jobs:
           npm ci
           python -m pip install --upgrade matplotlib
 
+      - name: Normalize token addresses
+        run: |
+          perl -0pi -e 's/ethers\.getAddress\(token\.address\)/ethers.getAddress(token.address.toLowerCase())/' \
+            scripts/scan_polygon_50_pool_100_blocks.js
+
       - name: Scan 50 real DEX pools over 100 consecutive Polygon blocks
         shell: bash
         run: |

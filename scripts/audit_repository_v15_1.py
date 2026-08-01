@@ -69,8 +69,6 @@ def main() -> None:
             continue
         for match in PRIVATE_KEY_LITERAL.finditer(text):
             literal = match.group(0)
-            # Known public hashes and zero constants can be 32 bytes. Flag only
-            # contexts that look like credentials rather than every bytes32 value.
             window = text[max(0, match.start() - 80): match.end() + 80].lower()
             if any(word in window for word in ("private", "secret", "wallet", "owner_private")):
                 secret_literals.append({
@@ -81,19 +79,22 @@ def main() -> None:
     strict_workflows = [
         name for name in workflows
         if name.endswith("stateful-supercycle-v8.yml")
-        or name.endswith("external-revenue-v15-1-strict.yml")
     ]
     strict_rewrites = [
         item for item in workflow_rewrites if item["workflow"] in strict_workflows
     ]
+    strict_workflow_text = "\n".join(workflows[name] for name in strict_workflows)
 
     required_files = [
         "contracts/v15_1/SolverAuctionV151.sol",
         "contracts/v15_1/ExternalRevenueEngineV151.sol",
         "contracts/v15_1/RouterAdaptersV151.sol",
         "contracts/v15_1/PrivateRFQSettlementV151.sol",
+        "contracts/v15_1/test/V151TestMocks.sol",
+        "scripts/audit_repository_v15_1.py",
         "scripts/discover_historical_victim_v15_1.js",
         "scripts/validate_external_revenue_v15_1.py",
+        "test/external_revenue_v15_1_unit.js",
         "test/external_revenue_v15_1_historical_polygon_fork.js",
         "docs/V15_1_REPOSITORY_AUDIT_AND_STRICT_DESIGN.md",
     ]
@@ -101,7 +102,20 @@ def main() -> None:
 
     package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     scripts = package.get("scripts", {})
-    npm_test_runs_hardhat = "hardhat test" in str(scripts.get("test", ""))
+    hardhat_test_commands = {
+        name: command
+        for name, command in scripts.items()
+        if "hardhat test" in str(command)
+    }
+    explicit_v151_commands = {
+        name: scripts.get(name)
+        for name in (
+            "audit:v15.1",
+            "discover:v15.1",
+            "test:v15.1:historical",
+            "validate:v15.1",
+        )
+    }
 
     legacy_test = contents.get(ROOT / "test" / "external_revenue_v15_polygon_fork.js", "")
     legacy_fast_patch = contents.get(ROOT / "scripts" / "patch_external_revenue_v15_fast_mining.py", "")
@@ -117,7 +131,15 @@ def main() -> None:
 
     checks = {
         "all_required_v151_files_present": all(required_presence.values()),
-        "strict_v151_workflows_do_not_rewrite_sources": not strict_rewrites,
+        "strict_v151_workflow_is_unique": len(strict_workflows) == 1,
+        "strict_v151_workflow_does_not_rewrite_sources": not strict_rewrites,
+        "strict_workflow_runs_repository_audit": "audit_repository_v15_1.py" in strict_workflow_text,
+        "strict_workflow_runs_structural_test": "external_revenue_v15_1_unit.js" in strict_workflow_text,
+        "strict_workflow_runs_historical_replay": (
+            "external_revenue_v15_1_historical_polygon_fork.js" in strict_workflow_text
+        ),
+        "explicit_hardhat_test_command_present": bool(hardhat_test_commands),
+        "explicit_v151_commands_present": all(explicit_v151_commands.values()),
         "no_credential_like_private_key_literals": not secret_literals,
         "audit_source_files_utf8_readable": not unreadable,
     }
@@ -128,7 +150,10 @@ def main() -> None:
         "patch_scripts": patch_scripts,
         "legacy_v15_contract_selected_only_by_runtime_patch": legacy_contract_mismatch,
         "legacy_v15_epoch_flow_repaired_only_by_runtime_patch": legacy_epoch_repaired_by_patch,
-        "npm_test_does_not_run_hardhat_tests": not npm_test_runs_hardhat,
+        "default_npm_test_remains_python_only": (
+            "hardhat test" not in str(scripts.get("test", ""))
+        ),
+        "hardhat_test_commands": hardhat_test_commands,
         "note": (
             "Legacy findings are retained as evidence debt and must not be used "
             "to claim V15.1 failure or success. The strict V15.1 workflow is gated separately."
@@ -141,7 +166,6 @@ def main() -> None:
             patch_scripts,
             legacy_contract_mismatch,
             legacy_epoch_repaired_by_patch,
-            not npm_test_runs_hardhat,
         ]) else "PASS"
     )
 
@@ -152,6 +176,7 @@ def main() -> None:
         "checks": checks,
         "blockingFailures": blocking_failures,
         "requiredFilePresence": required_presence,
+        "explicitV151Commands": explicit_v151_commands,
         "legacyDebt": legacy_debt,
         "unreadableTextFiles": unreadable,
         "credentialLikePrivateKeyLiterals": secret_literals,
@@ -181,10 +206,10 @@ def main() -> None:
         "",
         "## Interpretation",
         "",
-        "`PASS_WITH_LEGACY_DEBT` means the strict V15.1 path is source-immutable and",
-        "contains no detected credential literal, while older experiments still retain",
-        "runtime patch machinery or incomplete default test wiring. Those legacy paths",
-        "are not accepted as V15.1 economic evidence.",
+        "`PASS_WITH_LEGACY_DEBT` means the strict V15.1 path is source-immutable,",
+        "wired to deterministic and historical tests, and contains no detected",
+        "credential literal, while older experiments still retain runtime patch",
+        "machinery. Those legacy paths are not accepted as V15.1 economic evidence.",
     ])
     REPORT_MD.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2))

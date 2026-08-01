@@ -1,0 +1,97 @@
+name: SYNERGY V15.4 Self-Hosted Atomic Flash Certification
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: synergy-v15-4-self-hosted-certification
+  cancel-in-progress: false
+
+jobs:
+  certify-atomic-fixed-fee-flash:
+    runs-on: [self-hosted, linux, x64, synergy-v15]
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies and compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          mkdir -p reports
+          node --check test/atomic_flashloan_5pol_10x_v15_4.js
+          python -m py_compile \
+            simulation/atomic_flashloan_5pol_10x_v15_4.py \
+            scripts/validate_atomic_flashloan_v15_4.py
+          npx hardhat compile 2>&1 | tee reports/v15_4_self_hosted_compile.log
+
+      - name: Execute Solidity rollback and boundary proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run test:v15.4:flash \
+            2>&1 | tee reports/v15_4_self_hosted_structural.log
+
+      - name: Recompute deterministic economics
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run economics:v15.4:flash \
+            2>&1 | tee reports/v15_4_self_hosted_economics.log
+
+      - name: Run fail-closed dual-evidence validator
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run validate:v15.4:flash \
+            2>&1 | tee reports/v15_4_self_hosted_validator.log
+
+      - name: Enforce certified verdict
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          verdict = json.loads(
+              Path('reports/v15_4_atomic_flashloan_verdict.json').read_text()
+          )
+          structural = json.loads(
+              Path('reports/v15_4_atomic_flashloan_5pol_10x.json').read_text()
+          )
+
+          assert verdict.get('verdict') == 'PASS'
+          assert verdict.get('validationMode') == 'FAIL_CLOSED_DUAL_EVIDENCE'
+          assert structural.get('allAssertionsPassed') is True
+          assert structural.get('evidenceClass') == 'STRUCTURAL_ONLY_NOT_MARKET_EDGE'
+          print(json.dumps({
+              'runnerCertified': True,
+              'evidenceClass': structural.get('evidenceClass'),
+              'completedCycles': structural.get('cycles'),
+              'fixedFlashFeeWpolPerCycle': structural.get('fixedFlashFeeWpolPerCycle'),
+              'countedNetProtocolProfitWpol': structural.get('cumulativeNetProtocolProfitWpol'),
+              'reinvestedWpol': structural.get('reinvestedWpol'),
+              'retainedWpol': structural.get('retainedWpol'),
+          }, indent=2))
+          PY
+
+      - name: Upload runner-certified V15.4 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v15-4-runner-certified-atomic-fixed-5-wpol-flash-10x
+          path: reports/v15_4_*
+          if-no-files-found: error
+          compression-level: 6

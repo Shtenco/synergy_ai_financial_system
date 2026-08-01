@@ -46,8 +46,6 @@ const INTERNAL_POOLS = SYNTHETICS.flatMap((synthetic) =>
   ANCHORS.map((liquid) => `${synthetic}/${liquid}`)
 );
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 function median(values) {
   const clean = values.filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
   if (!clean.length) return 0;
@@ -60,7 +58,10 @@ function stable(symbol) {
 }
 
 function robustAnchorPrices(validStates) {
-  const prices = { USDT: 1, USDC: 1, DAI: 1 };
+  // Preserve graph-derived prices for all intermediate tokens so TVL ranking of
+  // the 50-pool graph remains valid. Stable and anchor values are then replaced
+  // by robust direct-market medians.
+  const prices = { ...deriveTokenPrices(validStates), USDT: 1, USDC: 1, DAI: 1 };
   for (const target of ["WPOL", "WETH"]) {
     const samples = [];
     for (const { pool, state } of validStates) {
@@ -70,11 +71,11 @@ function robustAnchorPrices(validStates) {
         samples.push(1 / state.spot10);
       }
     }
-    prices[target] = median(samples);
+    const directMedian = median(samples);
+    if (directMedian > 0) prices[target] = directMedian;
   }
-  const fallback = deriveTokenPrices(validStates);
   for (const anchor of ANCHORS) {
-    if (!(prices[anchor] > 0)) prices[anchor] = fallback[anchor] || 0;
+    if (!(prices[anchor] > 0)) throw new Error(`missing robust price for ${anchor}`);
   }
   return prices;
 }
@@ -210,9 +211,6 @@ async function scanBlock(blockTag, selectedPools) {
   })).filter(Boolean);
   const stateMap = new Map(states.map(({ pool, state }) => [poolKey(pool.kind, pool.address), state]));
   const prices = robustAnchorPrices(states);
-  if (ANCHORS.some((anchor) => !(prices[anchor] > 0))) {
-    throw new Error(`missing anchor oracle at block ${blockTag}: ${JSON.stringify(prices)}`);
-  }
   const edges = buildEdges(selectedPools, stateMap);
   const pathMap = new Map();
   for (const source of ANCHORS) {

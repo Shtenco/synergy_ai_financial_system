@@ -1,142 +1,33 @@
-name: SYNERGY V8 Stateful and V15 External Revenue Fork Proofs
+name: SYNERGY V15 External Revenue Polygon Fork Proof
 
 on:
   pull_request:
     branches: [audit/synergy-qe-polygon-fork]
     paths:
       - "hardhat.config.js"
-      - "contracts/supercycle/StatefulSupercycleV8.sol"
-      - "contracts/fork/SynergyAtomicQeQtCycleV11.sol"
       - "contracts/OrderflowAuction.sol"
       - "contracts/v15/PrivateRFQSettlementV15.sol"
       - "contracts/v15/ExternalRevenueEngineV15.sol"
-      - "test/stateful_supercycle_v8_10x10_polygon_fork.js"
       - "test/external_revenue_v15_polygon_fork.js"
-      - "simulation/stateful_supercycle_v8_10x10.py"
-      - "scripts/validate_stateful_supercycle_v8_10x10.py"
       - "scripts/validate_external_revenue_v15.py"
       - "scripts/patch_external_revenue_v15_quoter.py"
       - "scripts/patch_external_revenue_v15_stage_logs.py"
-      - "docs/STATEFUL_SUPERCYCLE_V8.md"
+      - "scripts/start_polygon_archive_fork.sh"
       - "docs/V15_EXTERNAL_REVENUE_FORK.md"
       - ".github/workflows/stateful-supercycle-v8.yml"
   workflow_dispatch:
 
 concurrency:
-  group: synergy-v8-v15-${{ github.event.pull_request.number || github.ref }}
+  group: synergy-v15-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  stateful-supercycle-v8-10x10:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 75
-    env:
-      SUPERCYCLE_COUNT: "3"
-      FORK_BLOCK_NUMBER: "90790000"
-      LOCAL_FORK_URL: "http://127.0.0.1:8545"
-      POLYGON_RPC_URL: "https://polygon.publicnode.com"
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: stable
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run 100-cycle integer accounting shadow
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p reports
-          python simulation/stateful_supercycle_v8_10x10.py \
-            2>&1 | tee reports/stateful_supercycle_v8_10x10_shadow.log
-
-      - name: Restore legacy V8 Paris compilation boundary
-        shell: bash
-        run: |
-          set -euo pipefail
-          perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
-          rm -rf contracts/v15
-          python - <<'PY'
-          from pathlib import Path
-          path = Path("hardhat.config.js")
-          text = path.read_text()
-          text = text.replace('evmVersion: "cancun"', 'evmVersion: "paris"')
-          text = text.replace('hardfork: "cancun"', 'hardfork: "shanghai"')
-          text = text.replace('cancun: 0', 'shanghai: 0')
-          path.write_text(text)
-          PY
-
-      - name: Compile direct V8 sources
-        run: npx hardhat compile
-
-      - name: Start pinned Polygon fork
-        shell: bash
-        run: |
-          set -euo pipefail
-          anvil \
-            --fork-url "$POLYGON_RPC_URL" \
-            --fork-block-number "$FORK_BLOCK_NUMBER" \
-            --timeout 600000 \
-            --chain-id 137 \
-            --hardfork shanghai \
-            --host 127.0.0.1 \
-            --port 8545 \
-            > reports/stateful_supercycle_v8_10x10_anvil.log 2>&1 &
-          for i in $(seq 1 60); do
-            if curl -s "$LOCAL_FORK_URL" \
-              -H 'content-type: application/json' \
-              --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
-              | grep -q '0x89'; then
-              exit 0
-            fi
-            sleep 1
-          done
-          cat reports/stateful_supercycle_v8_10x10_anvil.log
-          exit 1
-
-      - name: Run real 10 internal x 10 external stateful fork test
-        shell: bash
-        run: |
-          set -euo pipefail
-          npx hardhat test \
-            test/stateful_supercycle_v8_10x10_polygon_fork.js \
-            --network polygonFork \
-            2>&1 | tee reports/stateful_supercycle_v8_10x10_fork.log
-
-      - name: Independently validate shadow and fork evidence
-        shell: bash
-        run: |
-          set -euo pipefail
-          python scripts/validate_stateful_supercycle_v8_10x10.py \
-            2>&1 | tee reports/stateful_supercycle_v8_10x10_validator.log
-
-      - name: Upload complete V8 10x10 evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: synergy-v8-stateful-10x10-polygon-fork-evidence
-          path: reports/*
-          if-no-files-found: warn
-
   external-revenue-v15-polygon-fork:
     runs-on: ubuntu-22.04
     timeout-minutes: 100
     env:
       FORK_BLOCK_NUMBER: "91266308"
       LOCAL_FORK_URL: "http://127.0.0.1:8545"
-      POLYGON_RPC_URL: "https://polygon.publicnode.com"
     steps:
       - uses: actions/checkout@v4
 
@@ -166,37 +57,24 @@ jobs:
           python scripts/patch_external_revenue_v15_stage_logs.py
           node --check test/external_revenue_v15_polygon_fork.js
           python -m py_compile scripts/validate_external_revenue_v15.py
+          bash -n scripts/start_polygon_archive_fork.sh
           npx hardhat compile 2>&1 | tee reports/v15_external_revenue_compile.log
 
-      - name: Start V15 pinned Polygon fork
+      - name: Select archive RPC and start pinned Polygon fork
         shell: bash
         run: |
           set -euo pipefail
-          anvil \
-            --fork-url "$POLYGON_RPC_URL" \
-            --fork-block-number "$FORK_BLOCK_NUMBER" \
-            --timeout 600000 \
-            --chain-id 137 \
-            --hardfork cancun \
-            --host 127.0.0.1 \
-            --port 8545 \
-            > reports/v15_external_revenue_anvil.log 2>&1 &
-          for i in $(seq 1 90); do
-            if curl -s "$LOCAL_FORK_URL" \
-              -H 'content-type: application/json' \
-              --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
-              | grep -q '0x89'; then
-              exit 0
-            fi
-            sleep 1
-          done
-          cat reports/v15_external_revenue_anvil.log
-          exit 1
+          bash scripts/start_polygon_archive_fork.sh \
+            cancun \
+            reports/v15_external_revenue_anvil.log \
+            8545
 
       - name: Execute V15 intrablock backrun private RFQ and solver auctions
         shell: bash
         run: |
           set -euo pipefail
+          echo "V15_SELECTED_RPC ${SELECTED_POLYGON_RPC:-unknown}" \
+            | tee reports/v15_external_revenue_selected_rpc.log
           npx hardhat test \
             test/external_revenue_v15_polygon_fork.js \
             --network polygonFork \

@@ -49,6 +49,9 @@ async function main() {
   if (network.chainId !== 137n) throw new Error(`Polygon mainnet chainId 137 required, got ${network.chainId}`);
 
   const operator = process.env.V155_OPERATOR || signer.address;
+  if (operator.toLowerCase() !== signer.address.toLowerCase()) {
+    throw new Error("combined deploy-and-seed requires V155_OPERATOR to equal the disposable signer");
+  }
   const reinvestmentVault = required("V155_REINVESTMENT_VAULT");
   const retainedTreasury = required("V155_RETAINED_TREASURY");
   for (const address of [operator, reinvestmentVault, retainedTreasury]) {

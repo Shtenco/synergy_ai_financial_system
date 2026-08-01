@@ -129,7 +129,7 @@ contract ExternalRevenueEngineV151 is ReentrancyGuard {
         uint256 principal,
         Step[] calldata steps
     ) public view returns (bytes32) {
-        bytes32 stepsHash = keccak256("");
+        bytes32 stepsHash = keccak256(bytes(""));
         for (uint256 i = 0; i < steps.length; ++i) {
             Step calldata step = steps[i];
             stepsHash = keccak256(

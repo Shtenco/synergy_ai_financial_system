@@ -1,0 +1,104 @@
+name: SYNERGY V15 External Revenue Polygon Fork
+
+on:
+  pull_request:
+    branches: [audit/synergy-qe-polygon-fork]
+    paths:
+      - "contracts/v15/ExternalRevenueEngineV15.sol"
+      - "contracts/v15/PrivateRFQSettlementV15.sol"
+      - "test/external_revenue_v15_polygon_fork.js"
+      - "scripts/patch_external_revenue_v15_quoter.py"
+      - "scripts/patch_external_revenue_v15_fast_mining.py"
+      - "scripts/patch_external_revenue_v15_stage_logs.py"
+      - "scripts/start_polygon_archive_fork.sh"
+      - "scripts/validate_external_revenue_v15.py"
+      - "docs/V15_EXTERNAL_REVENUE_FORK.md"
+      - "hardhat.config.js"
+      - ".github/workflows/external-revenue-v15-polygon-fork.yml"
+  workflow_dispatch:
+    inputs:
+      fork_block:
+        description: "Pinned Polygon block"
+        required: false
+        default: "91266308"
+        type: string
+
+concurrency:
+  group: synergy-v15-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  external-revenue-v15-polygon-fork:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      FORK_BLOCK_NUMBER: ${{ inputs.fork_block || '91266308' }}
+      LOCAL_FORK_URL: "http://127.0.0.1:8545"
+      NODE_OPTIONS: "--max-old-space-size=6144"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build optimized V15 fork test
+        shell: bash
+        run: |
+          set -euo pipefail
+          perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
+          python scripts/patch_external_revenue_v15_quoter.py
+          python scripts/patch_external_revenue_v15_fast_mining.py
+          python scripts/patch_external_revenue_v15_stage_logs.py
+          node --check test/external_revenue_v15_polygon_fork.js
+          python -m py_compile scripts/validate_external_revenue_v15.py
+          npx hardhat compile
+
+      - name: Start archive-capable pinned Polygon fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          bash scripts/start_polygon_archive_fork.sh \
+            cancun \
+            reports/v15_external_revenue_anvil.log \
+            8545
+
+      - name: Execute V15 private solver multi-DEX fork proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/external_revenue_v15_polygon_fork.js \
+            --network polygonFork \
+            2>&1 | tee reports/v15_external_revenue_polygon_fork.log
+
+      - name: Independently validate external revenue and V14 gap coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_external_revenue_v15.py \
+            2>&1 | tee reports/v15_external_revenue_polygon_fork_validator.log
+
+      - name: Upload complete V15 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v15-external-revenue-polygon-fork-evidence
+          path: |
+            reports/v15_external_revenue_*
+            reports/polygon_archive_anvil*
+          if-no-files-found: error
+          compression-level: 6

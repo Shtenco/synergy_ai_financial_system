@@ -1,4 +1,4 @@
-name: SYNERGY V8 Stateful 10x10 Supercycle
+name: SYNERGY V8 Stateful and V15 External Revenue Fork Proofs
 
 on:
   pull_request:
@@ -6,12 +6,22 @@ on:
     paths:
       - "contracts/supercycle/StatefulSupercycleV8.sol"
       - "contracts/fork/SynergyAtomicQeQtCycleV11.sol"
+      - "contracts/OrderflowAuction.sol"
+      - "contracts/v15/PrivateRFQSettlementV15.sol"
+      - "contracts/v15/ExternalRevenueEngineV15.sol"
       - "test/stateful_supercycle_v8_10x10_polygon_fork.js"
+      - "test/external_revenue_v15_polygon_fork.js"
       - "simulation/stateful_supercycle_v8_10x10.py"
       - "scripts/validate_stateful_supercycle_v8_10x10.py"
+      - "scripts/validate_external_revenue_v15.py"
       - "docs/STATEFUL_SUPERCYCLE_V8.md"
+      - "docs/V15_EXTERNAL_REVENUE_FORK.md"
       - ".github/workflows/stateful-supercycle-v8.yml"
   workflow_dispatch:
+
+concurrency:
+  group: synergy-v8-v15-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   stateful-supercycle-v8-10x10:
@@ -102,3 +112,87 @@ jobs:
           name: synergy-v8-stateful-10x10-polygon-fork-evidence
           path: reports/*
           if-no-files-found: warn
+
+  external-revenue-v15-polygon-fork:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 100
+    env:
+      FORK_BLOCK_NUMBER: "91266308"
+      LOCAL_FORK_URL: "http://127.0.0.1:8545"
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate V15 sources and compile contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
+          node --check test/external_revenue_v15_polygon_fork.js
+          python -m py_compile scripts/validate_external_revenue_v15.py
+          npx hardhat compile
+
+      - name: Start V15 pinned Polygon fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          anvil \
+            --fork-url "$POLYGON_RPC_URL" \
+            --fork-block-number "$FORK_BLOCK_NUMBER" \
+            --chain-id 137 \
+            --hardfork shanghai \
+            --host 127.0.0.1 \
+            --port 8545 \
+            > reports/v15_external_revenue_anvil.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -s "$LOCAL_FORK_URL" \
+              -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+              | grep -q '0x89'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat reports/v15_external_revenue_anvil.log
+          exit 1
+
+      - name: Execute V15 intrablock backrun private RFQ and solver auctions
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test \
+            test/external_revenue_v15_polygon_fork.js \
+            --network polygonFork \
+            2>&1 | tee reports/v15_external_revenue_polygon_fork.log
+
+      - name: Validate V15 realized external NAV evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_external_revenue_v15.py \
+            2>&1 | tee reports/v15_external_revenue_validator.log
+
+      - name: Upload complete V15 fork evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v15-external-revenue-polygon-fork-evidence
+          path: reports/v15_*
+          if-no-files-found: error

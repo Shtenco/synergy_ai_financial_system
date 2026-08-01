@@ -3,7 +3,7 @@ pragma solidity ^0.8.26;
 
 /// @notice Explicit-close solver auction for the V15 fork proof. It avoids
 /// artificial block advancement while preserving committed-solution bidding,
-/// winner settlement, treasury revenue and single-use execution.
+/// winner settlement, losing-bid refunds, treasury revenue and single-use execution.
 contract SolverAuctionV15 {
     struct AuctionState {
         address tokenIn;
@@ -27,6 +27,7 @@ contract SolverAuctionV15 {
     mapping(uint256 epoch => AuctionState state) private auctions;
     mapping(uint256 epoch => bool) public consumed;
     mapping(uint256 epoch => mapping(address solver => uint256 bidAmount)) public bids;
+    mapping(uint256 epoch => address[] bidders) private bidderList;
 
     error Unauthorized();
     error InvalidAuction();
@@ -53,6 +54,7 @@ contract SolverAuctionV15 {
         uint256 amount,
         bytes32 indexed solutionHash
     );
+    event BidRefunded(uint256 indexed epoch, address indexed solver, uint256 amount);
     event AuctionSettled(
         uint256 indexed epoch,
         address indexed solver,
@@ -126,6 +128,7 @@ contract SolverAuctionV15 {
         }
         if (bids[epoch][msg.sender] != 0) revert InvalidBid();
         bids[epoch][msg.sender] = msg.value;
+        bidderList[epoch].push(msg.sender);
         if (msg.value > state.amount) {
             state.solver = msg.sender;
             state.amount = uint128(msg.value);
@@ -144,6 +147,18 @@ contract SolverAuctionV15 {
         uint256 winningBid = state.amount;
         (bool paid,) = treasury.call{value: winningBid}("");
         if (!paid) revert TransferFailed();
+
+        address[] storage epochBidders = bidderList[epoch];
+        for (uint256 i = 0; i < epochBidders.length; i++) {
+            address bidder = epochBidders[i];
+            if (bidder == state.solver) continue;
+            uint256 refund = bids[epoch][bidder];
+            if (refund == 0) continue;
+            bids[epoch][bidder] = 0;
+            (bool refunded,) = bidder.call{value: refund}("");
+            if (!refunded) revert TransferFailed();
+            emit BidRefunded(epoch, bidder, refund);
+        }
 
         emit AuctionSettled(epoch, state.solver, winningBid, state.solutionHash);
     }
@@ -170,6 +185,10 @@ contract SolverAuctionV15 {
         if (state.solutionHash != solutionHash) revert NotWinningSolution();
         consumed[epoch] = true;
         emit WinningSolutionConsumed(epoch, solutionHash);
+    }
+
+    function bidderCount(uint256 epoch) external view returns (uint256) {
+        return bidderList[epoch].length;
     }
 
     function auctionDetails(uint256 epoch)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Patch the V15 fork test to use the deployed Uniswap V3 Quoter for screening."""
+"""Patch V15 screening to use Uniswap Quoter and fundable victim-impact ranges."""
 from pathlib import Path
 
 path = Path("test/external_revenue_v15_polygon_fork.js")
@@ -27,6 +27,10 @@ replacements = [
         'async function selectRealMultiDexVenue(qsFactory, uniFactory, uniQuoter) {',
     ),
     (
+        '    if (targetUsdc === 0n || targetMid === 0n) continue;',
+        '    if (targetUsdc < U("10000") || targetMid === 0n) continue;',
+    ),
+    (
         '      if (sourceUsdc === 0n || sourceMid === 0n) continue;\n'
         '      candidates.push({',
         '      if (sourceUsdc === 0n || sourceMid === 0n) continue;\n'
@@ -37,6 +41,10 @@ replacements = [
         '        continue;\n'
         '      }\n'
         '      candidates.push({',
+    ),
+    (
+        '  candidates.sort((a, b) => (a.targetUsdc > b.targetUsdc ? -1 : a.targetUsdc < b.targetUsdc ? 1 : 0));',
+        '  candidates.sort((a, b) => (a.targetUsdc < b.targetUsdc ? -1 : a.targetUsdc > b.targetUsdc ? 1 : 0));',
     ),
     (
         'async function quoteUniV3(router, signer, tokenMid, fee, amountIn) {\n'
@@ -62,6 +70,12 @@ replacements = [
         'async function findBackrunCandidate({ qsRouter, uniQuoter, shocker, venue, shockerBalance, solverBalance }) {',
     ),
     (
+        '  const shockFractionsBps = [250n, 500n, 1000n, 2000n, 3000n];\n'
+        '  const tradeFractionsBps = [2n, 5n, 10n, 20n, 50n, 100n];',
+        '  const shockFractionsBps = [1000n, 2500n, 5000n, 10000n, 20000n, 50000n];\n'
+        '  const tradeFractionsBps = [1n, 2n, 5n, 10n, 20n, 50n, 100n, 200n, 500n];',
+    ),
+    (
         '          const midOut = await quoteUniV3(uniRouter, solver, venue.tokenMid, venue.fee, amountIn);',
         '          const midOut = await quoteUniV3(uniQuoter, venue.tokenMid, venue.fee, amountIn);',
     ),
@@ -75,6 +89,12 @@ replacements = [
         '    const uniRouter = new ethers.Contract(UNI_V3_ROUTER, V3_ROUTER_ABI, coordinator);\n'
         '    const uniQuoter = new ethers.Contract(UNI_V3_QUOTER, V3_QUOTER_ABI, coordinator);\n\n'
         '    const venue = await selectRealMultiDexVenue(qsFactory, uniFactory, uniQuoter);',
+    ),
+    (
+        '    const shockFunding = minBig(venue.targetUsdc * 35n / 100n, usdcDonor.balance * 35n / 100n);\n'
+        '    const solverFunding = minBig(venue.targetUsdc * 3n / 100n, usdcDonor.balance * 8n / 100n);',
+        '    const shockFunding = minBig(venue.targetUsdc * 6n, usdcDonor.balance * 60n / 100n);\n'
+        '    const solverFunding = minBig(venue.targetUsdc * 10n / 100n, usdcDonor.balance * 10n / 100n);',
     ),
     (
         '      uniRouter,\n'
@@ -91,4 +111,4 @@ for old, new in replacements:
     text = text.replace(old, new, 1)
 
 path.write_text(text, encoding="utf-8")
-print("patched V15 screening to use Uniswap V3 Quoter")
+print("patched V15 screening with quoter and fundable victim-impact search")

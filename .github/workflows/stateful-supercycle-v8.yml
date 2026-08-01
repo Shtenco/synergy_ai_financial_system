@@ -7,6 +7,7 @@ on:
       - "hardhat.config.js"
       - "package.json"
       - "contracts/v15_1/**"
+      - "test/external_revenue_v15_1_unit.js"
       - "test/external_revenue_v15_1_historical_polygon_fork.js"
       - "scripts/audit_repository_v15_1.py"
       - "scripts/discover_historical_victim_v15_1.js"
@@ -79,11 +80,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          node --check test/external_revenue_v15_1_unit.js
           node --check scripts/discover_historical_victim_v15_1.js
           node --check test/external_revenue_v15_1_historical_polygon_fork.js
           python -m py_compile scripts/validate_external_revenue_v15_1.py
           bash -n scripts/start_polygon_archive_fork.sh
           npx hardhat compile 2>&1 | tee reports/v15_1_compile.log
+
+      - name: Prove V15.1 structural accounting and pull-refund safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/external_revenue_v15_1_unit.js \
+            2>&1 | tee reports/v15_1_structural_test.log
 
       - name: Discover an actual historical QuickSwap victim
         shell: bash

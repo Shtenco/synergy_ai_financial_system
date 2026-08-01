@@ -1,0 +1,80 @@
+name: SYNERGY V15.4 Atomic Flashloan 5 WPOL x10
+
+on:
+  pull_request:
+    branches: [audit/synergy-qe-polygon-fork]
+    paths:
+      - "contracts/v15_4/**"
+      - "test/atomic_flashloan_5pol_10x_v15_4.js"
+      - "simulation/atomic_flashloan_5pol_10x_v15_4.py"
+      - "scripts/validate_atomic_flashloan_v15_4.py"
+      - "docs/V15_4_ATOMIC_FLASHLOAN_5_POL_10X.md"
+      - "package.json"
+      - ".github/workflows/atomic-flashloan-5pol-v15-4.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: synergy-v15-4-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  atomic-fixed-fee-flash:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate committed V15.4 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          node --check test/atomic_flashloan_5pol_10x_v15_4.js
+          python -m py_compile \
+            simulation/atomic_flashloan_5pol_10x_v15_4.py \
+            scripts/validate_atomic_flashloan_v15_4.py
+          npx hardhat compile 2>&1 | tee reports/v15_4_compile.log
+
+      - name: Prove ten-cycle atomic rollback and profitable batch accounting
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run test:v15.4:flash \
+            2>&1 | tee reports/v15_4_structural_test.log
+
+      - name: Recompute fixed-fee economics
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run economics:v15.4:flash \
+            2>&1 | tee reports/v15_4_economics.log
+
+      - name: Validate exact 5 WPOL fee, 2.685148 bps and 80 percent reinvestment
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run validate:v15.4:flash \
+            2>&1 | tee reports/v15_4_validator.log
+
+      - name: Upload V15.4 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v15-4-atomic-fixed-5-wpol-flash-10x
+          path: reports/v15_4_*
+          if-no-files-found: error
+          compression-level: 6

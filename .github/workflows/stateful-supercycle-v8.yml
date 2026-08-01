@@ -19,8 +19,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: synergy-v15-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: synergy-v15-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   external-revenue-v15-polygon-fork:

@@ -5,7 +5,7 @@ on:
     branches: [audit/synergy-qe-polygon-fork]
     paths:
       - "hardhat.config.js"
-      - "contracts/OrderflowAuction.sol"
+      - "contracts/v15/OrderflowAuctionV15.sol"
       - "contracts/v15/PrivateRFQSettlementV15.sol"
       - "contracts/v15/ExternalRevenueEngineV15.sol"
       - "test/external_revenue_v15_polygon_fork.js"
@@ -13,14 +13,15 @@ on:
       - "scripts/patch_external_revenue_v15_quoter.py"
       - "scripts/patch_external_revenue_v15_fast_mining.py"
       - "scripts/patch_external_revenue_v15_stage_logs.py"
+      - "scripts/patch_external_revenue_v15_deterministic_auction.py"
       - "scripts/start_polygon_archive_fork.sh"
       - "docs/V15_EXTERNAL_REVENUE_FORK.md"
       - ".github/workflows/stateful-supercycle-v8.yml"
   workflow_dispatch:
 
 concurrency:
-  group: synergy-v15-${{ github.sha }}
-  cancel-in-progress: false
+  group: synergy-v15-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   external-revenue-v15-polygon-fork:
@@ -57,12 +58,14 @@ jobs:
           python scripts/patch_external_revenue_v15_quoter.py
           python scripts/patch_external_revenue_v15_fast_mining.py
           python scripts/patch_external_revenue_v15_stage_logs.py
+          python scripts/patch_external_revenue_v15_deterministic_auction.py
           node --check test/external_revenue_v15_polygon_fork.js
           python -m py_compile \
             scripts/validate_external_revenue_v15.py \
             scripts/patch_external_revenue_v15_quoter.py \
             scripts/patch_external_revenue_v15_fast_mining.py \
-            scripts/patch_external_revenue_v15_stage_logs.py
+            scripts/patch_external_revenue_v15_stage_logs.py \
+            scripts/patch_external_revenue_v15_deterministic_auction.py
           bash -n scripts/start_polygon_archive_fork.sh
           npx hardhat compile 2>&1 | tee reports/v15_external_revenue_compile.log
 

@@ -28,21 +28,27 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
+
       - name: Materialize V11 fork bundle
         shell: bash
         run: |
           set -euo pipefail
           base64 -d .github/v11_atomic_fork_bundle.b64 > /tmp/v11bundle.tar.gz
-          echo "f2f5544d61406916810531f3e64b84f50cc2fbcd1f17d8c1b1b14466a99b0b42  /tmp/v11bundle.tar.gz" | sha256sum -c -
+          echo "3c52cc30e9911e279894897bd64ba6cf0786452b09be2fbf26d6fa1533487a62  /tmp/v11bundle.tar.gz" | sha256sum -c -
           tar -xzf /tmp/v11bundle.tar.gz -C .
           test -f contracts/fork/SynergyAtomicQeQtCycleV11.sol
           test -f test/synergy_atomic_qe_qt_v11_polygon_fork.js
+          test -f scripts/validate_atomic_qe_qt_v11_fork.py
+
       - name: Install dependencies
         run: npm ci
+
       - name: Patch legacy reserved Solidity identifier
         run: perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
+
       - name: Compile
         run: npx hardhat compile
+
       - name: Start pinned local Polygon fork
         shell: bash
         run: |
@@ -55,10 +61,19 @@ jobs:
           done
           cat reports/v11-anvil.log
           exit 1
+
       - name: Run atomic QE QT adversarial fork suite
-        run: npx hardhat test test/synergy_atomic_qe_qt_v11_polygon_fork.js --network polygonFork 2>&1 | tee reports/v11-fork-test.log
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/synergy_atomic_qe_qt_v11_polygon_fork.js --network polygonFork 2>&1 | tee reports/v11-fork-test.log
+
       - name: Validate invariants
-        run: python scripts/validate_atomic_qe_qt_v11_fork.py 2>&1 | tee reports/v11-verdict.log
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_atomic_qe_qt_v11_fork.py 2>&1 | tee reports/v11-verdict.log
+
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4

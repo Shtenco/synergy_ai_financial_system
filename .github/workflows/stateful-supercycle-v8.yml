@@ -5,8 +5,10 @@ on:
     branches: [audit/synergy-qe-polygon-fork]
     paths:
       - "hardhat.config.js"
+      - "package.json"
       - "contracts/v15_1/**"
       - "test/external_revenue_v15_1_historical_polygon_fork.js"
+      - "scripts/audit_repository_v15_1.py"
       - "scripts/discover_historical_victim_v15_1.js"
       - "scripts/validate_external_revenue_v15_1.py"
       - "scripts/start_polygon_archive_fork.sh"
@@ -64,11 +66,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Compile committed V15.1 sources without runtime rewriting
+      - name: Audit the complete checkout before V15.1
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p reports
+          python -m py_compile scripts/audit_repository_v15_1.py
+          python scripts/audit_repository_v15_1.py \
+            2>&1 | tee reports/v15_1_repository_audit.log
+
+      - name: Compile committed V15.1 sources without runtime rewriting
+        shell: bash
+        run: |
+          set -euo pipefail
           node --check scripts/discover_historical_victim_v15_1.js
           node --check test/external_revenue_v15_1_historical_polygon_fork.js
           python -m py_compile scripts/validate_external_revenue_v15_1.py

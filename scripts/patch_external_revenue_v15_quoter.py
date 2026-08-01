@@ -1,9 +1,125 @@
 #!/usr/bin/env python3
-"""Patch V15 screening to use Uniswap Quoter and fundable victim-impact ranges."""
+"""Patch V15 screening to combine V3 Quoter outputs with exact local V2 math."""
 from pathlib import Path
 
 path = Path("test/external_revenue_v15_polygon_fork.js")
 text = path.read_text(encoding="utf-8")
+
+old_search = '''async function findBackrunCandidate({ qsRouter, uniRouter, shocker, solver, venue, shockerBalance, solverBalance }) {
+  const shockFractionsBps = [250n, 500n, 1000n, 2000n, 3000n];
+  const tradeFractionsBps = [2n, 5n, 10n, 20n, 50n, 100n];
+  let best = null;
+
+  for (const shockBps of shockFractionsBps) {
+    const shockAmount = minBig(venue.targetUsdc * shockBps / 10000n, shockerBalance * 95n / 100n);
+    if (shockAmount < U("100")) continue;
+    const snapshot = await network.provider.send("evm_snapshot", []);
+    try {
+      const block = await ethers.provider.getBlock("latest");
+      await (
+        await qsRouter.connect(shocker).swapExactTokensForTokens(
+          shockAmount,
+          1n,
+          [USDC, venue.tokenMid],
+          shocker.address,
+          BigInt(block.timestamp + 3600)
+        )
+      ).wait();
+
+      for (const tradeBps of tradeFractionsBps) {
+        const amountIn = minBig(venue.targetUsdc * tradeBps / 10000n, solverBalance * 80n / 100n);
+        if (amountIn < U("50")) continue;
+        try {
+          const midOut = await quoteUniV3(uniRouter, solver, venue.tokenMid, venue.fee, amountIn);
+          const final = await qsRouter.getAmountsOut(midOut, [venue.tokenMid, USDC]);
+          const finalOut = final[1];
+          if (finalOut <= amountIn) continue;
+          const revenue = finalOut - amountIn;
+          const edgePpm = revenue * 1_000_000n / amountIn;
+          const record = { shockAmount, amountIn, midOut, finalOut, revenue, edgePpm };
+          if (!best || record.revenue > best.revenue) best = record;
+        } catch (_) {
+          // Unsupported fee/liquidity at this size.
+        }
+      }
+    } finally {
+      await network.provider.send("evm_revert", [snapshot]);
+    }
+  }
+
+  if (!best || best.edgePpm < 1500n) {
+    throw new Error(`No robust public backrun candidate; best=${best ? best.edgePpm : 0} ppm`);
+  }
+  return best;
+}
+'''
+
+new_search = '''function cpOut(amountIn, reserveIn, reserveOut, feeBps = 30n) {
+  if (amountIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) return 0n;
+  const amountInWithFee = amountIn * (10000n - feeBps);
+  return amountInWithFee * reserveOut / (reserveIn * 10000n + amountInWithFee);
+}
+
+async function findBackrunCandidate({ uniQuoter, venue, shockerBalance, solverBalance }) {
+  const shockFractionsBps = [1000n, 2500n, 5000n, 10000n, 20000n, 50000n];
+  const tradeFractionsBps = [1n, 2n, 5n, 10n, 20n, 50n, 100n, 200n, 500n];
+  const reserves = await pairReserves(venue.targetPair, USDC, venue.tokenMid);
+  const quotedTrades = [];
+  let quoteFailures = 0;
+
+  for (const tradeBps of tradeFractionsBps) {
+    const amountIn = minBig(reserves.reserveA * tradeBps / 10000n, solverBalance * 80n / 100n);
+    if (amountIn < U("10")) continue;
+    try {
+      const midOut = await quoteUniV3(uniQuoter, venue.tokenMid, venue.fee, amountIn);
+      if (midOut > 0n) quotedTrades.push({ amountIn, midOut, tradeBps });
+    } catch (_) {
+      quoteFailures += 1;
+    }
+  }
+
+  let best = null;
+  for (const shockBps of shockFractionsBps) {
+    const shockAmount = minBig(reserves.reserveA * shockBps / 10000n, shockerBalance * 95n / 100n);
+    if (shockAmount < U("100")) continue;
+    const victimMidOut = cpOut(shockAmount, reserves.reserveA, reserves.reserveB, 30n);
+    if (victimMidOut <= 0n || victimMidOut >= reserves.reserveB) continue;
+    const postUsdc = reserves.reserveA + shockAmount;
+    const postMid = reserves.reserveB - victimMidOut;
+
+    for (const quoted of quotedTrades) {
+      const finalOut = cpOut(quoted.midOut, postMid, postUsdc, 30n);
+      if (finalOut <= quoted.amountIn) continue;
+      const revenue = finalOut - quoted.amountIn;
+      const edgePpm = revenue * 1_000_000n / quoted.amountIn;
+      const record = {
+        shockAmount,
+        amountIn: quoted.amountIn,
+        midOut: quoted.midOut,
+        finalOut,
+        revenue,
+        edgePpm,
+        shockBps,
+        tradeBps: quoted.tradeBps,
+        victimMidOut,
+        postVictimUsdcReserve: postUsdc,
+        postVictimMidReserve: postMid,
+        quoterCalls: quotedTrades.length,
+        quoterFailures: quoteFailures,
+      };
+      if (!best || record.revenue > best.revenue) best = record;
+    }
+  }
+
+  if (!best || best.edgePpm < 1500n) {
+    throw new Error(
+      `No robust public backrun candidate; best=${best ? best.edgePpm : 0} ppm; `
+      + `quotedTrades=${quotedTrades.length}; quoteFailures=${quoteFailures}`
+    );
+  }
+  return best;
+}
+'''
 
 replacements = [
     (
@@ -65,20 +181,7 @@ replacements = [
         '  return quoter.quoteExactInputSingle.staticCall(USDC, tokenMid, fee, amountIn, 0);\n'
         '}\n',
     ),
-    (
-        'async function findBackrunCandidate({ qsRouter, uniRouter, shocker, solver, venue, shockerBalance, solverBalance }) {',
-        'async function findBackrunCandidate({ qsRouter, uniQuoter, shocker, venue, shockerBalance, solverBalance }) {',
-    ),
-    (
-        '  const shockFractionsBps = [250n, 500n, 1000n, 2000n, 3000n];\n'
-        '  const tradeFractionsBps = [2n, 5n, 10n, 20n, 50n, 100n];',
-        '  const shockFractionsBps = [1000n, 2500n, 5000n, 10000n, 20000n, 50000n];\n'
-        '  const tradeFractionsBps = [1n, 2n, 5n, 10n, 20n, 50n, 100n, 200n, 500n];',
-    ),
-    (
-        '          const midOut = await quoteUniV3(uniRouter, solver, venue.tokenMid, venue.fee, amountIn);',
-        '          const midOut = await quoteUniV3(uniQuoter, venue.tokenMid, venue.fee, amountIn);',
-    ),
+    (old_search, new_search),
     (
         'for (const address of [WPOL, USDC, QS_V2_FACTORY, QS_V2_ROUTER, UNI_V3_FACTORY, UNI_V3_ROUTER]) {',
         'for (const address of [WPOL, USDC, QS_V2_FACTORY, QS_V2_ROUTER, UNI_V3_FACTORY, UNI_V3_ROUTER, UNI_V3_QUOTER]) {',
@@ -97,18 +200,22 @@ replacements = [
         '    const solverFunding = minBig(venue.targetUsdc * 10n / 100n, usdcDonor.balance * 10n / 100n);',
     ),
     (
+        '    const candidate = await findBackrunCandidate({\n'
+        '      qsRouter,\n'
         '      uniRouter,\n'
         '      shocker,\n'
-        '      solver: solver3,',
+        '      solver: solver3,\n'
+        '      venue,',
+        '    const candidate = await findBackrunCandidate({\n'
         '      uniQuoter,\n'
-        '      shocker,',
+        '      venue,',
     ),
 ]
 
 for old, new in replacements:
     if old not in text:
-        raise SystemExit(f"required V15 source fragment not found: {old[:100]!r}")
+        raise SystemExit(f"required V15 source fragment not found: {old[:140]!r}")
     text = text.replace(old, new, 1)
 
 path.write_text(text, encoding="utf-8")
-print("patched V15 screening with quoter and fundable victim-impact search")
+print("patched V15 screening with one-shot V3 quotes and exact local V2 math")

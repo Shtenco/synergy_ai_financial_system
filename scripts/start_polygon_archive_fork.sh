@@ -9,18 +9,15 @@ LOCAL_URL="http://127.0.0.1:${PORT}"
 
 USDC="0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
 WPOL="0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270"
-WETH="0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619"
 QS_FACTORY="0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32"
-QS_ROUTER="0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff"
 UNI_FACTORY="0x1F98431c8aD98523631AE4a59f267346ea31F984"
-UNI_ROUTER="0xE592427A0AEce92De3Edee1F18E0157C05861564"
 UNI_QUOTER="0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
 
 RPC_CANDIDATES=(
+  "https://tenderly.rpc.polygon.community/"
   "https://polygon.drpc.org"
   "https://polygon-public.nodies.app/"
   "https://polygon.api.onfinality.io/public"
-  "https://tenderly.rpc.polygon.community/"
   "https://1rpc.io/matic"
   "https://polygon-mainnet.gateway.tatum.io/"
 )
@@ -55,7 +52,7 @@ for rpc_url in "${RPC_CANDIDATES[@]}"; do
   anvil \
     --fork-url "$rpc_url" \
     --fork-block-number "$BLOCK_NUMBER" \
-    --timeout 120000 \
+    --timeout 180000 \
     --chain-id 137 \
     --hardfork "$HARD_FORK" \
     --host 127.0.0.1 \
@@ -80,16 +77,11 @@ for rpc_url in "${RPC_CANDIDATES[@]}"; do
 
   probe_ok=0
   if [[ "$ready" == "1" ]]; then
-    # Warm the exact contracts and storage families V15 uses. A provider that
-    # passes only eth_getCode but cannot serve these calls is rejected here.
+    # Gate only on state V15 actually requires. Router helper methods are not
+    # used as provider eligibility tests because their ABI differs by deployment.
     if \
       cast_probe "$QS_FACTORY" "getPair(address,address)(address)" "$USDC" "$WPOL" && \
-      cast_probe "$QS_FACTORY" "getPair(address,address)(address)" "$USDC" "$WETH" && \
       cast_probe "$UNI_FACTORY" "getPool(address,address,uint24)(address)" "$USDC" "$WPOL" 100 && \
-      cast_probe "$UNI_FACTORY" "getPool(address,address,uint24)(address)" "$USDC" "$WETH" 100 && \
-      cast_probe "$USDC" "balanceOf(address)(uint256)" "$QS_FACTORY" && \
-      cast_probe "$QS_ROUTER" "factory()(address)" && \
-      cast_probe "$UNI_ROUTER" "factory()(address)" && \
       cast_probe "$UNI_QUOTER" \
         "quoteExactInputSingle(address,address,uint24,uint256,uint160)(uint256)" \
         "$USDC" "$WPOL" 100 10000000 0; then
@@ -128,5 +120,5 @@ for rpc_url in "${RPC_CANDIDATES[@]}"; do
   echo "ARCHIVE_FORK_REJECTED ${rpc_url}" | tee -a "$LOG_FILE"
 done
 
-echo "No archive-capable Polygon RPC candidate passed the V15 DEX prewarm" | tee -a "$LOG_FILE"
+echo "No archive-capable Polygon RPC candidate passed the V15 pool and quoter prewarm" | tee -a "$LOG_FILE"
 exit 1

@@ -16,6 +16,7 @@ on:
       - "scripts/validate_stateful_supercycle_v8_10x10.py"
       - "scripts/validate_external_revenue_v15.py"
       - "scripts/patch_external_revenue_v15_quoter.py"
+      - "scripts/patch_external_revenue_v15_stage_logs.py"
       - "docs/STATEFUL_SUPERCYCLE_V8.md"
       - "docs/V15_EXTERNAL_REVENUE_FORK.md"
       - ".github/workflows/stateful-supercycle-v8.yml"
@@ -33,7 +34,7 @@ jobs:
       SUPERCYCLE_COUNT: "3"
       FORK_BLOCK_NUMBER: "90790000"
       LOCAL_FORK_URL: "http://127.0.0.1:8545"
-      POLYGON_RPC_URL: "https://polygon.drpc.org"
+      POLYGON_RPC_URL: "https://polygon.publicnode.com"
     steps:
       - uses: actions/checkout@v4
 
@@ -87,6 +88,7 @@ jobs:
           anvil \
             --fork-url "$POLYGON_RPC_URL" \
             --fork-block-number "$FORK_BLOCK_NUMBER" \
+            --timeout 600000 \
             --chain-id 137 \
             --hardfork shanghai \
             --host 127.0.0.1 \
@@ -134,7 +136,7 @@ jobs:
     env:
       FORK_BLOCK_NUMBER: "91266308"
       LOCAL_FORK_URL: "http://127.0.0.1:8545"
-      POLYGON_RPC_URL: "https://polygon.drpc.org"
+      POLYGON_RPC_URL: "https://polygon.publicnode.com"
     steps:
       - uses: actions/checkout@v4
 
@@ -161,6 +163,7 @@ jobs:
           mkdir -p reports
           perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
           python scripts/patch_external_revenue_v15_quoter.py
+          python scripts/patch_external_revenue_v15_stage_logs.py
           node --check test/external_revenue_v15_polygon_fork.js
           python -m py_compile scripts/validate_external_revenue_v15.py
           npx hardhat compile 2>&1 | tee reports/v15_external_revenue_compile.log
@@ -172,6 +175,7 @@ jobs:
           anvil \
             --fork-url "$POLYGON_RPC_URL" \
             --fork-block-number "$FORK_BLOCK_NUMBER" \
+            --timeout 600000 \
             --chain-id 137 \
             --hardfork cancun \
             --host 127.0.0.1 \

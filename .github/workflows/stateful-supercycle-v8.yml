@@ -11,6 +11,7 @@ on:
       - "test/external_revenue_v15_polygon_fork.js"
       - "scripts/validate_external_revenue_v15.py"
       - "scripts/patch_external_revenue_v15_quoter.py"
+      - "scripts/patch_external_revenue_v15_fast_mining.py"
       - "scripts/patch_external_revenue_v15_stage_logs.py"
       - "scripts/start_polygon_archive_fork.sh"
       - "docs/V15_EXTERNAL_REVENUE_FORK.md"
@@ -54,9 +55,14 @@ jobs:
           mkdir -p reports
           perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
           python scripts/patch_external_revenue_v15_quoter.py
+          python scripts/patch_external_revenue_v15_fast_mining.py
           python scripts/patch_external_revenue_v15_stage_logs.py
           node --check test/external_revenue_v15_polygon_fork.js
-          python -m py_compile scripts/validate_external_revenue_v15.py
+          python -m py_compile \
+            scripts/validate_external_revenue_v15.py \
+            scripts/patch_external_revenue_v15_quoter.py \
+            scripts/patch_external_revenue_v15_fast_mining.py \
+            scripts/patch_external_revenue_v15_stage_logs.py
           bash -n scripts/start_polygon_archive_fork.sh
           npx hardhat compile 2>&1 | tee reports/v15_external_revenue_compile.log
 

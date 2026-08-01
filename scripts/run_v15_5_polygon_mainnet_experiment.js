@@ -155,7 +155,8 @@ async function main() {
     priorRisk += BigInt(deployment.riskBudget?.actualGasSpentWei || 0);
     priorRisk += BigInt(deployment.riskBudget?.conservativelyCountedSeedCapitalWei || 0);
   } else {
-    priorRisk = ethers.parseEther(process.env.V155_PRIOR_RISK_POL || "0");
+    const priorRiskPol = required("V155_PRIOR_RISK_POL");
+    priorRisk = ethers.parseEther(priorRiskPol);
   }
   if (priorRisk + cycleMaximumGasRisk > MAX_TOTAL_RISK) {
     throw new Error("deployment/seed plus maximum cycle gas risk exceeds 10 POL");
@@ -217,7 +218,12 @@ async function main() {
   );
   console.log(JSON.stringify(jsonSafe(preflight), null, 2));
 
-  if (staticResult !== "UNEXPECTED_STATIC_PASS" && process.env.V155_BROADCAST_REVERT_PROBE !== CONFIRM_REVERT) {
+  if (staticResult === "UNEXPECTED_STATIC_PASS") {
+    throw new Error(
+      "Unexpected static PASS: mainnet broadcast is blocked until an independent trace and consolidated-NAV audit approves a separate success experiment."
+    );
+  }
+  if (process.env.V155_BROADCAST_REVERT_PROBE !== CONFIRM_REVERT) {
     console.log(`NOT BROADCAST: set V155_BROADCAST_REVERT_PROBE=${CONFIRM_REVERT} to spend gas on the one expected-revert scientific probe.`);
     return;
   }

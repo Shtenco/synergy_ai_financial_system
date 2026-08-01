@@ -11,6 +11,7 @@ on:
       - "scripts/validate_managed_gradient_v13.py"
       - "scripts/audit_managed_gradient_v13_statefulness.py"
       - "scripts/scan_managed_gradient_v14_stateful.js"
+      - "scripts/patch_managed_gradient_v14_wallet_funding.py"
       - "scripts/validate_managed_gradient_v14_stateful.py"
       - "docs/REPOSITORY_WIDE_MANAGED_GRADIENT_AUDIT_V13.md"
       - "docs/V14_STRICT_STATEFUL_CLOSED_LOOP.md"
@@ -141,6 +142,7 @@ jobs:
       - name: Build V14 quote library and validate sources
         run: |
           python scripts/export_polygon_scanner_lib_v13.py
+          python scripts/patch_managed_gradient_v14_wallet_funding.py
           node --check scripts/_polygon_scanner_lib_v13.js
           node --check scripts/scan_managed_gradient_v14_stateful.js
           python -m py_compile scripts/validate_managed_gradient_v14_stateful.py

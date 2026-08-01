@@ -12,6 +12,8 @@
     "discover:v15.1": "node scripts/discover_historical_victim_v15_1.js",
     "test:v15.1:historical": "hardhat test test/external_revenue_v15_1_historical_polygon_fork.js --network polygonFork",
     "validate:v15.1": "python scripts/validate_external_revenue_v15_1.py",
+    "economics:v15.2": "python simulation/synergy_econometric_supermodel_v15_2.py",
+    "validate:economics:v15.2": "python scripts/validate_synergy_econometric_supermodel_v15_2.py",
     "fork:preflight": "hardhat run scripts/fork_preflight.js --network hardhat",
     "solver:watch": "node scripts/watch_solver_auction.js",
     "solver:bid": "node scripts/submit_solver_bid.js",

@@ -1,28 +1,9 @@
 #!/usr/bin/env python3
-"""Batch Anvil mining and add fine-grained solver-auction diagnostics."""
+"""Replace epoch-mining auction flow with the explicit-close V15 solver auction."""
 from pathlib import Path
 
 path = Path("test/external_revenue_v15_polygon_fork.js")
 text = path.read_text(encoding="utf-8")
-
-old_mining = '''async function mineBlocks(count) {
-  for (let i = 0; i < count; i += 1) {
-    await network.provider.send("evm_mine", []);
-  }
-}
-'''
-new_mining = '''async function mineBlocks(count) {
-  try {
-    await network.provider.send("anvil_mine", [ethers.toQuantity(count)]);
-    return;
-  } catch (error) {
-    console.log(`V15_STAGE batch-mine-fallback count=${count} reason=${error.shortMessage || error.message}`);
-  }
-  for (let i = 0; i < count; i += 1) {
-    await network.provider.send("evm_mine", []);
-  }
-}
-'''
 
 old_auction = '''async function runSolverAuction({ auction, coordinator, treasury, solvers, solutionHash, tokenMid, label }) {
   await mineToNextEpochStart();
@@ -65,12 +46,9 @@ old_auction = '''async function runSolverAuction({ auction, coordinator, treasur
 '''
 
 new_auction = '''async function runSolverAuction({ auction, coordinator, treasury, solvers, solutionHash, tokenMid, label }) {
-  console.log(`V15_STAGE auction-${label}-align-start block=${await ethers.provider.getBlockNumber()}`);
-  await mineToNextEpochStart();
-  console.log(`V15_STAGE auction-${label}-aligned block=${await ethers.provider.getBlockNumber()}`);
-  const epoch = await auction.currentEpoch();
   const venuesHash = ethers.keccak256(ethers.toUtf8Bytes(`UNISWAP_V3|QUICKSWAP_V2|PRIVATE_RFQ|${label}`));
   const receipts = [];
+  console.log(`V15_STAGE auction-${label}-publish-start block=${await ethers.provider.getBlockNumber()}`);
   receipts.push(await (
     await auction.connect(coordinator).publish(
       USDC,
@@ -81,6 +59,7 @@ new_auction = '''async function runSolverAuction({ auction, coordinator, treasur
       `ipfs://sinergy-v15/${label}`
     )
   ).wait());
+  const epoch = await auction.currentEpoch();
   console.log(`V15_STAGE auction-${label}-published epoch=${epoch}`);
 
   const bids = [E("0.10"), E("0.20"), E("0.30")];
@@ -88,11 +67,9 @@ new_auction = '''async function runSolverAuction({ auction, coordinator, treasur
     receipts.push(await (await auction.connect(solvers[i]).bid(solutionHash, { value: bids[i] })).wait());
     console.log(`V15_STAGE auction-${label}-bid index=${i} amount=${bids[i]}`);
   }
+
   const expectedWinner = solvers[2];
   const nativeBefore = await ethers.provider.getBalance(treasury.address);
-  console.log(`V15_STAGE auction-${label}-settlement-align-start block=${await ethers.provider.getBlockNumber()}`);
-  await mineToNextEpochStart();
-  console.log(`V15_STAGE auction-${label}-settlement-aligned block=${await ethers.provider.getBlockNumber()}`);
   receipts.push(await (await auction.connect(coordinator).settle(epoch)).wait());
   console.log(`V15_STAGE auction-${label}-settled epoch=${epoch}`);
   const nativeAfter = await ethers.provider.getBalance(treasury.address);
@@ -101,6 +78,7 @@ new_auction = '''async function runSolverAuction({ auction, coordinator, treasur
   assert.equal(winning[2], solutionHash);
   assert.equal(winning[3], true);
   assert.equal(nativeAfter - nativeBefore, bids[2]);
+  assert.equal(await auction.bidderCount(epoch), 3n);
   return {
     epoch,
     winner: expectedWinner,
@@ -111,10 +89,18 @@ new_auction = '''async function runSolverAuction({ auction, coordinator, treasur
 }
 '''
 
-for old, new in ((old_mining, new_mining), (old_auction, new_auction)):
+replacements = [
+    (old_auction, new_auction),
+    (
+        'const Auction = await ethers.getContractFactory("OrderflowAuction", coordinator);',
+        'const Auction = await ethers.getContractFactory("SolverAuctionV15", coordinator);',
+    ),
+]
+
+for old, new in replacements:
     if old not in text:
-        raise SystemExit(f"required V15 mining/auction fragment not found: {old[:120]!r}")
+        raise SystemExit(f"required V15 auction fragment not found: {old[:140]!r}")
     text = text.replace(old, new, 1)
 
 path.write_text(text, encoding="utf-8")
-print("patched V15 batch mining and auction stage diagnostics")
+print("patched V15 to use explicit-close solver auction without artificial mining")

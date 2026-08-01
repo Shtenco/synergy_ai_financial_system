@@ -69,6 +69,8 @@ def main() -> None:
         and record.get("managedGradientSupplyDelta") == 0
         and record.get("temporaryQeSupplyAfter") == 0
         and record.get("destinationRecycleSupplyAfter") == 0
+        and finite(record.get("walletAfterBuybackDestination"))
+        and float(record["walletAfterBuybackDestination"]) >= 0
         and close(
             record.get("sourceLiquidReserveBefore"),
             record.get("sourceLiquidReserveAfter"),
@@ -183,8 +185,9 @@ def main() -> None:
         "exact_attempts": summary.get("exactAttempts", 0),
         "interpretation": (
             "PASS validates sequential internal state, exact external source restoration, "
-            "destination buyback-value recycling, zero-net synthetic supply, unique external "
-            "pool use and realized NAV accounting. Edge status is independent of validator PASS."
+            "atomic buyback funding, destination buyback-value recycling, zero-net synthetic "
+            "supply, unique external pool use and realized NAV accounting. Edge status is "
+            "independent of validator PASS."
         ),
     }
     OUTPUT.write_text(json.dumps(result, indent=2), encoding="utf-8")

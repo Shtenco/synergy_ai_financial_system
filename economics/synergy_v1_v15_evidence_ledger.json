@@ -1,0 +1,250 @@
+{
+  "title": "SYNERGY V1-V15 evidence and economic contribution ledger",
+  "method": "Each version is classified by the strongest reusable contribution and by whether its reported PnL is admissible as external revenue in V15.2.",
+  "versions": [
+    {
+      "version": "V1",
+      "strongest_contribution": "Exact integer AMM accounting, timelocked policy/custody boundary, LP-recycling falsification.",
+      "evidence_class": "deterministic prototype",
+      "keep": [
+        "GraphPolicy",
+        "GraphTreasury",
+        "integer CPMM accounting",
+        "fail-closed execution"
+      ],
+      "exclude_from_revenue": [
+        "LP token destruction",
+        "buyback/mint/re-add as value creation"
+      ],
+      "v15_2_role": "governance and accounting foundation"
+    },
+    {
+      "version": "V2",
+      "strongest_contribution": "Exclusive QE inventory auction thesis, solver bonding/commit-reveal, oracle and reserve guards.",
+      "evidence_class": "audited conditional architecture",
+      "keep": [
+        "exclusive inventory vault",
+        "sealed solver competition",
+        "atomic settlement",
+        "non-bypass requirement"
+      ],
+      "exclude_from_revenue": [
+        "assumed annual MEV rate",
+        "public stale-price QE wedge"
+      ],
+      "v15_2_role": "orderflow market design"
+    },
+    {
+      "version": "V3",
+      "strongest_contribution": "Consolidated ledger, system boundary, haircut assets, stress liabilities, solvency/liquidity/gas/dividend gates.",
+      "evidence_class": "successful deterministic/Monte Carlo/fork accounting evidence",
+      "keep": [
+        "ConsolidatedLedger",
+        "SystemBoundaryRegistry",
+        "SolvencyController",
+        "external-only revenue classification"
+      ],
+      "exclude_from_revenue": [
+        "modeled external PnL as a live forecast"
+      ],
+      "v15_2_role": "economic constitution"
+    },
+    {
+      "version": "V4",
+      "strongest_contribution": "Real Liquidity Multiplier based on stress-equivalent executable depth and a single risk invariant.",
+      "evidence_class": "successful model/stress/fork infrastructure evidence",
+      "keep": [
+        "3-5x stress executable liquidity target",
+        "volatility-dependent multiplier",
+        "pause outside supported regime"
+      ],
+      "exclude_from_revenue": [
+        "nominal TVL multiplier",
+        "withdrawable-capital interpretation"
+      ],
+      "v15_2_role": "capital efficiency and capacity layer"
+    },
+    {
+      "version": "V5",
+      "strongest_contribution": "Permissioned DEX, participant registry, restricted representative tokens, original-capital/profit separation and automatic compounding.",
+      "evidence_class": "successful conditional model/fork accounting evidence",
+      "keep": [
+        "ParticipantTaxRegistry",
+        "permissioned graph",
+        "profit-only reinvestment",
+        "zero cash leakage"
+      ],
+      "exclude_from_revenue": [
+        "exogenous test revenue as recurring demand"
+      ],
+      "v15_2_role": "compounding layer"
+    },
+    {
+      "version": "V6",
+      "strongest_contribution": "No-new-investor-capital self-support invariant with bounded keeper reimbursement and profit-only growth.",
+      "evidence_class": "successful conditional model/fork accounting evidence",
+      "keep": [
+        "keeper cost coverage",
+        "bootstrap capital immutability",
+        "self-support invariant",
+        "internal-recycling rejection"
+      ],
+      "exclude_from_revenue": [
+        "self-support without external operating revenue"
+      ],
+      "v15_2_role": "operating sustainability layer"
+    },
+    {
+      "version": "V7",
+      "strongest_contribution": "Complete permissioned four-asset graph, restricted public representative pool and hybrid internal/external route gate.",
+      "evidence_class": "successful topology/model/fork gate evidence",
+      "keep": [
+        "six-pool internal graph",
+        "two external exits",
+        "commit-reveal",
+        "internalValueLoss deduction"
+      ],
+      "exclude_from_revenue": [
+        "QE-created distortion",
+        "guaranteed live cycle"
+      ],
+      "v15_2_role": "graph execution and venue control"
+    },
+    {
+      "version": "V8",
+      "strongest_contribution": "10x10 topology commitment, stateful controller and atomic QE/external-route/QT sequence.",
+      "evidence_class": "conditional fork fixture",
+      "keep": [
+        "10 internal plus 10 external topology",
+        "state carry",
+        "supply closure",
+        "gas and consolidated checks"
+      ],
+      "exclude_from_revenue": [
+        "fixture-created orderflow as recurring edge",
+        "claim that all ten internal pools were optimized"
+      ],
+      "v15_2_role": "stateful orchestration"
+    },
+    {
+      "version": "V9",
+      "strongest_contribution": "Atomic flash-financing attempt and live-test failure evidence.",
+      "evidence_class": "failed workflow/experimental branch",
+      "keep": [
+        "flash repayment gates",
+        "failure diagnostics",
+        "atomic rollback"
+      ],
+      "exclude_from_revenue": [
+        "unproven flash edge"
+      ],
+      "v15_2_role": "financing adapter only"
+    },
+    {
+      "version": "V10",
+      "strongest_contribution": "50-pool, 100-block real-state exhaustive external route scan.",
+      "evidence_class": "negative empirical screen under simplified one-pool model",
+      "keep": [
+        "broad real-pool scanner",
+        "exact quote discipline",
+        "negative-result reporting"
+      ],
+      "exclude_from_revenue": [
+        "generalization from simplified one-pool assumption to full system"
+      ],
+      "v15_2_role": "market opportunity baseline"
+    },
+    {
+      "version": "V11",
+      "strongest_contribution": "Exact atomic one-pool temporary QE, external V3/V2 execution, buyback, full burn and k restoration.",
+      "evidence_class": "successful conditional shock fork fixture",
+      "keep": [
+        "exact closure mechanics",
+        "replay rejection",
+        "MEV rollback",
+        "no-external-flow pause"
+      ],
+      "exclude_from_revenue": [
+        "shock-funded 49.179634 USDT as recurring return"
+      ],
+      "v15_2_role": "atomic settlement primitive"
+    },
+    {
+      "version": "V12",
+      "strongest_contribution": "Direct reserve burn/mint gradient and decisive consolidated accounting falsification.",
+      "evidence_class": "successful negative fork experiment",
+      "keep": [
+        "supply-neutral gradient mechanics",
+        "wallet versus consolidated PnL distinction",
+        "accounting identity"
+      ],
+      "exclude_from_revenue": [
+        "3237.964779 USDT wallet profit offset by LP loss"
+      ],
+      "v15_2_role": "anti-self-deception gate"
+    },
+    {
+      "version": "V13",
+      "strongest_contribution": "17.5M-configuration managed-gradient scanner, quote caching and 100-block opportunity discovery.",
+      "evidence_class": "positive independent-snapshot screen, non-stateful",
+      "keep": [
+        "large combinatorial scanner",
+        "multi-hop routes",
+        "wallet/consolidated separation"
+      ],
+      "exclude_from_revenue": [
+        "42.147408 snapshot sum as cumulative profit"
+      ],
+      "v15_2_role": "candidate generation"
+    },
+    {
+      "version": "V14",
+      "strongest_contribution": "Strict stateful LP restoration and realized NAV benchmark.",
+      "evidence_class": "binding negative stateful evidence",
+      "keep": [
+        "all-pool state carry",
+        "source restoration",
+        "reverse route funding",
+        "single-use external state",
+        "realized NAV only"
+      ],
+      "exclude_from_revenue": [
+        "internal gradient as external value"
+      ],
+      "v15_2_role": "binding accounting baseline and 2.68515 bps hurdle"
+    },
+    {
+      "version": "V15/V15.1",
+      "strongest_contribution": "ExternalRevenueEngine, multi-adapter routes, solver auction, private RFQ and historical victim replay design.",
+      "evidence_class": "V15 legacy proof rejected; V15.1 source-immutable architecture not runner-executed",
+      "keep": [
+        "external revenue portfolio",
+        "pull refunds",
+        "refundable bonds",
+        "rational solver split",
+        "historical replay"
+      ],
+      "exclude_from_revenue": [
+        "own solver bids",
+        "simulated RFQ subsidy",
+        "synthetic victim",
+        "unexecuted structural claim"
+      ],
+      "v15_2_role": "external revenue acquisition layer"
+    }
+  ],
+  "synthesis": {
+    "core_stack": [
+      "V3 accounting and solvency",
+      "V4 executable-liquidity capacity",
+      "V5 permissioned compounding",
+      "V6 self-support",
+      "V7 graph and access control",
+      "V11 atomic closure",
+      "V12-V14 falsification gates",
+      "V15.1 external orderflow/RFQ/auction engine"
+    ],
+    "economic_thesis": "SYNERGY is strongest as an operating system that captures, verifies and compounds external surplus. Internal QE/QT is inventory and liquidity control, never revenue.",
+    "binding_rule": "No version-level wallet or module profit is admitted unless consolidated external NAV increases after all costs, LP damage and liabilities."
+  }
+}

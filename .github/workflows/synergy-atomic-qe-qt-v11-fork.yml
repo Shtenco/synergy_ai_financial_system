@@ -1,0 +1,68 @@
+name: SYNERGY Atomic QE QT V11 Polygon Fork
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/v11_atomic_fork_bundle.b64"
+      - ".github/workflows/synergy-atomic-qe-qt-v11-fork.yml"
+  workflow_dispatch:
+
+jobs:
+  atomic-qe-qt-v11-fork:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      FORK_BLOCK_NUMBER: "90790000"
+      LOCAL_FORK_URL: "http://127.0.0.1:8545"
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Materialize V11 fork bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d .github/v11_atomic_fork_bundle.b64 > /tmp/v11bundle.tar.gz
+          echo "f2f5544d61406916810531f3e64b84f50cc2fbcd1f17d8c1b1b14466a99b0b42  /tmp/v11bundle.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/v11bundle.tar.gz -C .
+          test -f contracts/fork/SynergyAtomicQeQtCycleV11.sol
+          test -f test/synergy_atomic_qe_qt_v11_polygon_fork.js
+      - name: Install dependencies
+        run: npm ci
+      - name: Patch legacy reserved Solidity identifier
+        run: perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
+      - name: Compile
+        run: npx hardhat compile
+      - name: Start pinned local Polygon fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          anvil --fork-url "$POLYGON_RPC_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --chain-id 137 --hardfork shanghai --host 127.0.0.1 --port 8545 > reports/v11-anvil.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -s "$LOCAL_FORK_URL" -H 'content-type: application/json' --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' | grep -q '0x89'; then exit 0; fi
+            sleep 1
+          done
+          cat reports/v11-anvil.log
+          exit 1
+      - name: Run atomic QE QT adversarial fork suite
+        run: npx hardhat test test/synergy_atomic_qe_qt_v11_polygon_fork.js --network polygonFork 2>&1 | tee reports/v11-fork-test.log
+      - name: Validate invariants
+        run: python scripts/validate_atomic_qe_qt_v11_fork.py 2>&1 | tee reports/v11-verdict.log
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-atomic-qe-qt-v11-polygon-fork-evidence
+          path: reports/*
+          if-no-files-found: warn

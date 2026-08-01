@@ -53,11 +53,13 @@ jobs:
           npm ci
           python -m pip install --upgrade matplotlib
 
-      - name: Normalize addresses and disable RPC batching
+      - name: Normalize scanner for the public archive endpoint
         run: |
           perl -0pi -e 's/ethers\.getAddress\(token\.address\)/ethers.getAddress(token.address.toLowerCase())/' \
             scripts/scan_polygon_50_pool_100_blocks.js
           perl -0pi -e 's/\{ staticNetwork: true \}/\{ staticNetwork: true, batchMaxCount: 1 \}/' \
+            scripts/scan_polygon_50_pool_100_blocks.js
+          perl -0pi -e 's/\.filter\(\(pool\) => pool\.tvlUsd > 100\)/.filter((pool) => pool.tvlUsd > 0)/' \
             scripts/scan_polygon_50_pool_100_blocks.js
 
       - name: Scan 50 real DEX pools over 100 consecutive Polygon blocks

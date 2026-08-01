@@ -27,6 +27,11 @@ on:
         required: false
         default: false
         type: boolean
+      prior_risk_pol:
+        description: "Required for probe_existing: already spent gas plus conservatively counted seed POL"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: synergy-v15-5-polygon-mainnet-experiment
@@ -110,8 +115,11 @@ jobs:
       - name: Static mainnet preflight
         if: ${{ inputs.mode == 'deploy_seed_and_probe' || inputs.mode == 'probe_existing' }}
         shell: bash
+        env:
+          V155_PRIOR_RISK_POL: ${{ inputs.prior_risk_pol }}
         run: |
           set -euo pipefail
+          if [ "${{ inputs.mode }}" = "probe_existing" ]; then test -n "$V155_PRIOR_RISK_POL"; fi
           npm run run:v15.5:polygon 2>&1 | tee reports/v15_5_mainnet_preflight.log
 
       - name: Broadcast exactly one expected-revert probe
@@ -119,6 +127,7 @@ jobs:
         shell: bash
         env:
           V155_BROADCAST_REVERT_PROBE: I_ACCEPT_ONE_REVERTING_MAINNET_TRANSACTION
+          V155_PRIOR_RISK_POL: ${{ inputs.prior_risk_pol }}
         run: |
           set -euo pipefail
           npm run run:v15.5:polygon 2>&1 | tee reports/v15_5_mainnet_probe.log

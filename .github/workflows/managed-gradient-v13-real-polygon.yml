@@ -1,19 +1,14 @@
-name: SYNERGY V13 Snapshot and V14 Stateful Evidence
+name: SYNERGY V14 Strict Stateful Evidence
 
 on:
   pull_request:
     branches: [audit/synergy-qe-polygon-fork]
     paths:
       - "scripts/export_polygon_scanner_lib_v13.py"
-      - "scripts/patch_managed_gradient_v13_quote_cache.py"
       - "scripts/scan_polygon_50_pool_100_blocks.js"
-      - "scripts/scan_managed_gradient_v13.js"
-      - "scripts/validate_managed_gradient_v13.py"
-      - "scripts/audit_managed_gradient_v13_statefulness.py"
       - "scripts/scan_managed_gradient_v14_stateful.js"
       - "scripts/patch_managed_gradient_v14_wallet_funding.py"
       - "scripts/validate_managed_gradient_v14_stateful.py"
-      - "docs/REPOSITORY_WIDE_MANAGED_GRADIENT_AUDIT_V13.md"
       - "docs/V14_STRICT_STATEFUL_CLOSED_LOOP.md"
       - ".github/workflows/managed-gradient-v13-real-polygon.yml"
   workflow_dispatch:
@@ -23,81 +18,11 @@ on:
         required: false
         type: string
 
+concurrency:
+  group: synergy-v14-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  managed-gradient-v13:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 120
-    env:
-      POLYGON_RPC_URL: "https://polygon.drpc.org"
-      BLOCK_COUNT: "100"
-      CONFIRMATIONS: "12"
-      EXTERNAL_POOL_TARGET: "50"
-      MAX_HOPS: "4"
-      INTERNAL_SYNTHETIC_RESERVE: "5000"
-      INTERNAL_LIQUID_DEPTH_USD: "5000"
-      INTERNAL_FEE_BPS: "30"
-      GRADIENT_SHIFT_BPS: "1000,2000,3000,4000"
-      QE_SIZE_BPS: "50,100,200,300,400,500,700,1000"
-      MIN_ROUTE_POOL_TVL_USD: "5000"
-      MIN_WALLET_PROFIT_USD: "0.01"
-      MIN_NET_PROFIT_USD: "0.25"
-      TOP_WALLET_EXACT_PER_BLOCK: "4"
-      PRIORITY_FEE_GWEI: "30"
-      END_BLOCK: ${{ inputs.end_block }}
-      NODE_OPTIONS: "--max-old-space-size=6144"
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build and optimize reusable real-Polygon scanner
-        run: |
-          python scripts/export_polygon_scanner_lib_v13.py
-          python scripts/patch_managed_gradient_v13_quote_cache.py
-          node --check scripts/_polygon_scanner_lib_v13.js
-          node --check scripts/scan_managed_gradient_v13.js
-
-      - name: Scan V13 independent historical snapshots
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p reports
-          node scripts/scan_managed_gradient_v13.js \
-            2>&1 | tee reports/managed_gradient_v13_scan.log
-
-      - name: Validate V13 snapshot accounting
-        shell: bash
-        run: |
-          set -euo pipefail
-          python scripts/validate_managed_gradient_v13.py \
-            2>&1 | tee reports/managed_gradient_v13_validator.log
-
-      - name: Reject V13 snapshot sum as a stateful total
-        shell: bash
-        run: |
-          set -euo pipefail
-          python scripts/audit_managed_gradient_v13_statefulness.py \
-            2>&1 | tee reports/managed_gradient_v13_statefulness.log
-
-      - name: Upload complete V13 evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: synergy-v13-managed-gradient-10x50-real-polygon-evidence
-          path: reports/managed_gradient_v13*
-          if-no-files-found: error
-
   managed-gradient-v14-stateful:
     runs-on: ubuntu-22.04
     timeout-minutes: 180

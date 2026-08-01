@@ -8,6 +8,7 @@ on:
       - "scripts/patch_managed_gradient_v13_quote_cache.py"
       - "scripts/scan_managed_gradient_v13.js"
       - "scripts/validate_managed_gradient_v13.py"
+      - "scripts/audit_managed_gradient_v13_statefulness.py"
       - "docs/REPOSITORY_WIDE_MANAGED_GRADIENT_AUDIT_V13.md"
       - ".github/workflows/managed-gradient-v13-real-polygon.yml"
   workflow_dispatch:
@@ -76,6 +77,13 @@ jobs:
           set -euo pipefail
           python scripts/validate_managed_gradient_v13.py \
             2>&1 | tee reports/managed_gradient_v13_validator.log
+
+      - name: Audit independent snapshots versus a stateful 100-cycle claim
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/audit_managed_gradient_v13_statefulness.py \
+            2>&1 | tee reports/managed_gradient_v13_statefulness.log
 
       - name: Upload complete V13 evidence
         if: always()

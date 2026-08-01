@@ -1,0 +1,136 @@
+{
+  "scenario": "synergy_v15_6_recovered_v8_v11_positive_polygon_fork",
+  "verdict": "PASS",
+  "validationMode": "FAIL_CLOSED_RECOVERED_V8_V11_POSITIVE_FORK",
+  "rootCause": {
+    "mergeBase": "927a5e4d0046e377c78fed7f1a033ea0e3abc9c6",
+    "missingCommitsFromV11V12Branch": 15,
+    "recoveryPullRequest": 10,
+    "recoveryMergeCommit": "7511bda78da38cd59c9ae828db5644e6bbb99f6f",
+    "workflowOverwriteDetected": true,
+    "previousMisclassification": "V15.5 negative-control rollback was incorrectly presented as closure of the primary graph-profit architecture"
+  },
+  "exactPrivateSourceBindings": {
+    "repository": "Shtenco/ai_financial_system",
+    "branch": "audit/stateful-supercycle-v8",
+    "v11Executor": {
+      "path": "contracts/fork/SynergyAtomicQeQtCycleV11.sol",
+      "gitBlobSha": "6c8303eae6bfae608532fbdfb50df72c044a1581",
+      "sha256": "dc22ed5e5c260a69a1331643f66e231e0702a282e57923682342dadc0a05ea7c",
+      "bytes": 9594,
+      "artifactSha256": "27742c1991b52a041b982e25534a74e79955b31c394d798194a605ec25a901c6",
+      "creationBytecodeBytes": 6980,
+      "creationBytecodeSha256": "71ac7da88fc4df40c7b1f1b449668268ff2bc1faf23292292c16edcdea45e0f2",
+      "deployedBytecodeBytes": 6332,
+      "deployedBytecodeSha256": "8d440467c52612b546e567007face9c2e9d01788b3d726e527daf5df6f01d8a5"
+    },
+    "v8Controller": {
+      "path": "contracts/supercycle/StatefulSupercycleV8.sol",
+      "gitBlobSha": "390eb5f99f2b6665708b460df9ecdf379227f615",
+      "sha256": "a09b0e393eb3c7abaf1dc99eb6562a89ce86ddf71e50be8479513cd8a17766a8",
+      "bytes": 6418,
+      "artifactSha256": "40fe6d358a1099c6dcad9581ec3d4933b049c25352f0297bf9ca4f6bb8fc129e",
+      "creationBytecodeBytes": 3587,
+      "creationBytecodeSha256": "2e27c569cb42c6bdbf54db1ed1dd91c78408ae57da686834d6d69a0ad9da99d5",
+      "deployedBytecodeBytes": 3112,
+      "deployedBytecodeSha256": "1eb92b7c6b2309d8678f1f3b42954763455bb6cd1674b518f01114454c984b60"
+    },
+    "internalDexSource": {
+      "privatePath": "contracts/SynergyV5Modules.sol",
+      "privateGitBlobSha": "2087110d8ea3b8b6509d2ac8e1ee3b94d22bba19",
+      "executedSubset": [
+        "ParticipantTaxRegistry",
+        "SynergyPermissionedPair",
+        "SynergyDexFactoryV5",
+        "SynergyDexRouterV5"
+      ]
+    }
+  },
+  "compiler": {
+    "solcVersion": "0.8.26+commit.8a97fa7a.Emscripten.clang",
+    "hardhatVersion": "2.22.19",
+    "optimizerEnabled": true,
+    "optimizerRuns": 500,
+    "viaIR": true,
+    "evmVersion": "cancun",
+    "compiledSolidityFiles": 16
+  },
+  "polygonFork": {
+    "chainId": 137,
+    "blockNumber": 90790000,
+    "blockHash": "0xb0a1c2e01753d64bf33c0a0f97f6d22cb236b657f66d4376f4e0eac4d4b4488f",
+    "internalPoolsValidated": 10,
+    "externalPoolsValidated": 10,
+    "executedInternalPools": 1,
+    "executedExternalEdges": 2,
+    "externalExecutionRoute": "QuickSwap Algebra V3 USDT->WPOL then QuickSwap V2 WPOL->USDT",
+    "successfulCycles": 3,
+    "independentExternalShockUsdt": 9326.629578,
+    "cumulativeTreasuryProfitUsdt": 75.491852,
+    "cumulativeGasUsdtAt274Gwei": 0.061587,
+    "netTreasuryProfitAfterMeasuredGasUsdt": 75.430265,
+    "consolidatedProtocolUsdtGain": 76.667613,
+    "syntheticSupplyRestored": true,
+    "temporarySupplyClosed": true,
+    "otherProtocolAssetsPreserved": true,
+    "profitAfterGasPositive": true,
+    "cycles": [
+      {
+        "cycle": 1,
+        "qeMint": 65.286407,
+        "externalUsdt": 90.914892,
+        "buybackUsdt": 65.417635,
+        "treasuryProfitUsdt": 25.497257,
+        "gasUsdtAt274Gwei": 0.026453,
+        "netAfterGasUsdt": 25.470804,
+        "kBefore": "4262314944975998446116",
+        "kAfter": "4262340531894075100344"
+      },
+      {
+        "cycle": 2,
+        "qeMint": 65.286407,
+        "externalUsdt": 90.581367,
+        "buybackUsdt": 65.418027,
+        "treasuryProfitUsdt": 25.16334,
+        "gasUsdtAt274Gwei": 0.017594,
+        "netAfterGasUsdt": 25.145746,
+        "kBefore": "4262340531894075100344",
+        "kAfter": "4262366118942724568664"
+      },
+      {
+        "cycle": 3,
+        "qeMint": 65.286407,
+        "externalUsdt": 90.249675,
+        "buybackUsdt": 65.41842,
+        "treasuryProfitUsdt": 24.831255,
+        "gasUsdtAt274Gwei": 0.01754,
+        "netAfterGasUsdt": 24.813715,
+        "kBefore": "4262366118942724568664",
+        "kAfter": "4262391706187233258122"
+      }
+    ]
+  },
+  "evidence": {
+    "publicEvidenceRepository": "Shtenco/shtencoauantai.github.io",
+    "publicEvidenceBranch": "ci/v8-graph-recovery",
+    "publicEvidenceCommit": "ff5135cc237475b0cbe52f9e167789c8cdc85042",
+    "workflowRunId": 30723654292,
+    "workflowJobId": 91431413001,
+    "workflowConclusion": "success",
+    "artifactId": 8825633463,
+    "artifactSizeBytes": 58281,
+    "artifactDigest": "sha256:59b470a2f604c69cff21d32c573cac6d3cdc79ddc357bda20992e7bccc6e4b78",
+    "artifactFileCount": 40,
+    "internalChecksumEntries": 39,
+    "internalChecksumFailures": 0,
+    "forkReportSha256": "7340a303eb8912467fbd57e5a512c26ef3e702b43f70cb77668f87c59cb4a5cf"
+  },
+  "honestBoundary": {
+    "v8V11PositivePathRecovered": true,
+    "arbitraryFiftyPoolExecutionProven": false,
+    "realAaveFlashBorrowIntegratedIntoRecoveredCycles": false,
+    "v14StrictFiftyPoolAcceptedCycles": 0,
+    "v15_5Role": "negative control only: internal ADDLP/reversible swaps without an external edge revert and create zero counted revenue",
+    "nextRequiredIntegration": "real Aave flash principal -> 50-pool route optimizer -> selected external graph cycle -> exact internal buyback -> QT closure -> V14 consolidated accounting after premium and gas"
+  }
+}

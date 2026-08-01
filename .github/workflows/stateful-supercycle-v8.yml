@@ -18,10 +18,6 @@ on:
       - ".github/workflows/stateful-supercycle-v8.yml"
   workflow_dispatch:
 
-concurrency:
-  group: synergy-v15-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
   external-revenue-v15-polygon-fork:
     runs-on: ubuntu-22.04

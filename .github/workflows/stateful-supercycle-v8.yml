@@ -1,30 +1,50 @@
-name: SYNERGY V15 External Revenue Polygon Fork Proof
+name: SYNERGY V15.1 Strict Historical External Revenue
 
 on:
   pull_request:
     branches: [audit/synergy-qe-polygon-fork]
     paths:
       - "hardhat.config.js"
-      - "contracts/v15/SolverAuctionV15.sol"
-      - "contracts/v15/PrivateRFQSettlementV15.sol"
-      - "contracts/v15/ExternalRevenueEngineV15.sol"
-      - "test/external_revenue_v15_polygon_fork.js"
-      - "scripts/validate_external_revenue_v15.py"
-      - "scripts/patch_external_revenue_v15_quoter.py"
-      - "scripts/patch_external_revenue_v15_fast_mining.py"
-      - "scripts/patch_external_revenue_v15_stage_logs.py"
+      - "contracts/v15_1/**"
+      - "test/external_revenue_v15_1_historical_polygon_fork.js"
+      - "scripts/discover_historical_victim_v15_1.js"
+      - "scripts/validate_external_revenue_v15_1.py"
       - "scripts/start_polygon_archive_fork.sh"
-      - "docs/V15_EXTERNAL_REVENUE_FORK.md"
+      - "docs/V15_1_REPOSITORY_AUDIT_AND_STRICT_DESIGN.md"
       - ".github/workflows/stateful-supercycle-v8.yml"
   workflow_dispatch:
+    inputs:
+      scan_start_block:
+        description: "First historical Polygon block to inspect"
+        required: false
+        default: "91266209"
+        type: string
+      scan_end_block:
+        description: "Last historical Polygon block to inspect"
+        required: false
+        default: "91266308"
+        type: string
+      minimum_victim_usdc:
+        description: "Minimum actual QuickSwap V2 USDC input"
+        required: false
+        default: "1000"
+        type: string
+
+concurrency:
+  group: synergy-v15-1-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  external-revenue-v15-polygon-fork:
+  strict-historical-external-revenue:
     runs-on: ubuntu-22.04
-    timeout-minutes: 100
+    timeout-minutes: 120
     env:
-      FORK_BLOCK_NUMBER: "91266308"
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
       LOCAL_FORK_URL: "http://127.0.0.1:8545"
+      V151_SCAN_START_BLOCK: ${{ inputs.scan_start_block || '91266209' }}
+      V151_SCAN_END_BLOCK: ${{ inputs.scan_end_block || '91266308' }}
+      V151_MIN_VICTIM_USDC: ${{ inputs.minimum_victim_usdc || '1000' }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -44,55 +64,66 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate V15 sources and compile contracts
+      - name: Compile committed V15.1 sources without runtime rewriting
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p reports
-          perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
-          python scripts/patch_external_revenue_v15_quoter.py
-          python scripts/patch_external_revenue_v15_fast_mining.py
-          python scripts/patch_external_revenue_v15_stage_logs.py
-          node --check test/external_revenue_v15_polygon_fork.js
-          python -m py_compile \
-            scripts/validate_external_revenue_v15.py \
-            scripts/patch_external_revenue_v15_quoter.py \
-            scripts/patch_external_revenue_v15_fast_mining.py \
-            scripts/patch_external_revenue_v15_stage_logs.py
+          node --check scripts/discover_historical_victim_v15_1.js
+          node --check test/external_revenue_v15_1_historical_polygon_fork.js
+          python -m py_compile scripts/validate_external_revenue_v15_1.py
           bash -n scripts/start_polygon_archive_fork.sh
-          npx hardhat compile 2>&1 | tee reports/v15_external_revenue_compile.log
+          npx hardhat compile 2>&1 | tee reports/v15_1_compile.log
 
-      - name: Select archive RPC and start pinned Polygon fork
+      - name: Discover an actual historical QuickSwap victim
+        shell: bash
+        run: |
+          set +e
+          node scripts/discover_historical_victim_v15_1.js \
+            2>&1 | tee reports/v15_1_historical_victim_discovery.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$status" == "0" ]]; then
+            echo "V151_HISTORICAL_VICTIM_FOUND=true" >> "$GITHUB_ENV"
+          elif [[ "$status" == "2" ]]; then
+            echo "V151_HISTORICAL_VICTIM_FOUND=false" >> "$GITHUB_ENV"
+          else
+            exit "$status"
+          fi
+
+      - name: Start Polygon fork immediately before the historical victim
+        if: env.V151_HISTORICAL_VICTIM_FOUND == 'true'
         shell: bash
         run: |
           set -euo pipefail
           bash scripts/start_polygon_archive_fork.sh \
             cancun \
-            reports/v15_external_revenue_anvil.log \
+            reports/v15_1_anvil.log \
             8545
 
-      - name: Execute V15 intrablock backrun private RFQ and solver auctions
+      - name: Replay victim and execute the V15.1 backrun
+        if: env.V151_HISTORICAL_VICTIM_FOUND == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          echo "V15_SELECTED_RPC ${SELECTED_POLYGON_RPC:-unknown}" \
-            | tee reports/v15_external_revenue_selected_rpc.log
           npx hardhat test \
-            test/external_revenue_v15_polygon_fork.js \
+            test/external_revenue_v15_1_historical_polygon_fork.js \
             --network polygonFork \
-            2>&1 | tee reports/v15_external_revenue_polygon_fork.log
+            2>&1 | tee reports/v15_1_historical_polygon_fork.log
 
-      - name: Validate V15 realized external NAV evidence
+      - name: Validate strict V15.1 evidence classification
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/validate_external_revenue_v15.py \
-            2>&1 | tee reports/v15_external_revenue_validator.log
+          python scripts/validate_external_revenue_v15_1.py \
+            2>&1 | tee reports/v15_1_validator.log
 
-      - name: Upload complete V15 fork evidence
+      - name: Upload complete V15.1 evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: synergy-v15-external-revenue-polygon-fork-evidence
-          path: reports/v15_*
+          name: synergy-v15-1-strict-historical-external-revenue
+          path: reports/v15_1_*
           if-no-files-found: error
+          compression-level: 6

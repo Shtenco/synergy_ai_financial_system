@@ -36,21 +36,24 @@ For managed synthetic S, source asset A and destination asset B:
 2. Temporarily mint q units of S.
 3. Swap q S into S/A and extract real asset A.
 4. Route A through an exact real Polygon DEX path and receive B.
-5. Spend the exact required B to buy q S from S/B.
-6. Burn the bought q S. Temporary QE supply returns to zero.
-7. Burn q S from the source pair and mint q S into the destination pair. The
+5. Require the forward output itself to cover the exact B buyback. No reserve or
+   treasury subsidy may bridge the buyback leg.
+6. Spend the exact required B to buy q S from S/B.
+7. Burn the bought q S. Temporary QE supply returns to zero.
+8. Burn q S from the source pair and mint q S into the destination pair. The
    target synthetic gradient is restored with zero net supply change.
-8. The buyback has added B to the destination LP. V14 temporarily mints an
+9. The buyback has added B to the destination LP. V14 temporarily mints an
    independently calculated amount of S, swaps it into S/B to extract exactly
    that added B, and burns the deposited temporary S directly from the pair.
    The destination LP returns to its pre-cycle liquid and synthetic reserves.
-9. Route B through a different exact external path back into A.
-10. Restore exactly the A extracted from the source LP. Any reverse-quote
+10. Require the recovered forward output to cover the exact reverse-route input.
+11. Route B through a different exact external path back into A.
+12. Restore exactly the A extracted from the source LP. Any reverse-quote
     rounding excess goes to treasury.
-11. Deduct conservative gas from the stateful USDT gas budget.
-12. Accept only if both LPs are restored, all synthetic supply invariants close,
-    the external routes are disjoint, the wallet funds the reverse route, and
-    realized protocol NAV after gas is positive.
+13. Deduct conservative gas from the stateful USDT gas budget.
+14. Accept only if both LPs are restored, all synthetic supply invariants close,
+    the external routes are disjoint, both buyback and reverse route are funded
+    atomically, and realized protocol NAV after gas is positive.
 
 The destination buyback is therefore not counted as profit and is not left as a
 hidden destination-LP gain. The source extraction is not left as a hidden
@@ -83,8 +86,10 @@ reduce the number of accepted cycles.
 An accepted cycle must satisfy all of the following:
 
 - exact forward quote succeeds;
+- forward output covers the exact synthetic buyback without treasury subsidy;
 - exact reverse input is found by bracketed binary search;
-- forward output covers reverse-route input;
+- forward output also covers the reverse-route input after buyback value is
+  recycled from the destination LP;
 - source liquid amount after cycle equals its amount before cycle;
 - destination liquid amount after cycle equals its amount before cycle;
 - source and destination k do not decrease;

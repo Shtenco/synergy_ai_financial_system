@@ -9,7 +9,7 @@ from pathlib import Path
 DISCOVERY = Path("reports/v15_1_historical_victim_discovery.json")
 REPORT = Path("reports/v15_1_historical_polygon_fork.json")
 VERDICT = Path("reports/v15_1_strict_verdict.json")
-WORKFLOW = Path(".github/workflows/external-revenue-v15-1-strict.yml")
+WORKFLOW = Path(".github/workflows/stateful-supercycle-v8.yml")
 CONTRACT_ROOT = Path("contracts/v15_1")
 
 MIN_EDGE_PPM = 269

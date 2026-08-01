@@ -7,11 +7,20 @@ PORT="${3:-8545}"
 BLOCK_NUMBER="${FORK_BLOCK_NUMBER:?FORK_BLOCK_NUMBER is required}"
 LOCAL_URL="http://127.0.0.1:${PORT}"
 
+USDC="0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+WPOL="0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270"
+WETH="0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619"
+QS_FACTORY="0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32"
+QS_ROUTER="0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff"
+UNI_FACTORY="0x1F98431c8aD98523631AE4a59f267346ea31F984"
+UNI_ROUTER="0xE592427A0AEce92De3Edee1F18E0157C05861564"
+UNI_QUOTER="0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
+
 RPC_CANDIDATES=(
-  "https://tenderly.rpc.polygon.community/"
   "https://polygon.drpc.org"
   "https://polygon-public.nodies.app/"
   "https://polygon.api.onfinality.io/public"
+  "https://tenderly.rpc.polygon.community/"
   "https://1rpc.io/matic"
   "https://polygon-mainnet.gateway.tatum.io/"
 )
@@ -34,6 +43,10 @@ stop_pid() {
   wait "$pid" 2>/dev/null || true
 }
 
+cast_probe() {
+  timeout 40s cast call "$@" --rpc-url "$LOCAL_URL" >/dev/null 2>&1
+}
+
 for rpc_url in "${RPC_CANDIDATES[@]}"; do
   echo "ARCHIVE_FORK_CANDIDATE ${rpc_url}" | tee -a "$LOG_FILE"
   candidate_log="${LOG_FILE%.log}.$(echo "$rpc_url" | tr -c '[:alnum:]' '_').log"
@@ -42,7 +55,7 @@ for rpc_url in "${RPC_CANDIDATES[@]}"; do
   anvil \
     --fork-url "$rpc_url" \
     --fork-block-number "$BLOCK_NUMBER" \
-    --timeout 180000 \
+    --timeout 120000 \
     --chain-id 137 \
     --hardfork "$HARD_FORK" \
     --host 127.0.0.1 \
@@ -65,34 +78,49 @@ for rpc_url in "${RPC_CANDIDATES[@]}"; do
     sleep 1
   done
 
+  probe_ok=0
   if [[ "$ready" == "1" ]]; then
-    # Force several historical state reads before accepting the provider.
-    probes=(
-      '{"jsonrpc":"2.0","method":"eth_getCode","params":["0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff","latest"],"id":2}'
-      '{"jsonrpc":"2.0","method":"eth_getCode","params":["0xE592427A0AEce92De3Edee1F18E0157C05861564","latest"],"id":3}'
-      '{"jsonrpc":"2.0","method":"eth_getCode","params":["0x1F98431c8aD98523631AE4a59f267346ea31F984","latest"],"id":4}'
-      '{"jsonrpc":"2.0","method":"eth_getCode","params":["0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32","latest"],"id":5}'
-      '{"jsonrpc":"2.0","method":"eth_getBalance","params":["0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266","latest"],"id":6}'
-    )
-    probe_ok=1
-    for payload in "${probes[@]}"; do
-      response="$(curl --max-time 20 -s "$LOCAL_URL" \
-        -H 'content-type: application/json' \
-        --data "$payload" || true)"
-      if [[ -z "$response" ]] || echo "$response" | grep -q '"error"'; then
-        probe_ok=0
-        break
+    # Warm the exact contracts and storage families V15 uses. A provider that
+    # passes only eth_getCode but cannot serve these calls is rejected here.
+    if \
+      cast_probe "$QS_FACTORY" "getPair(address,address)(address)" "$USDC" "$WPOL" && \
+      cast_probe "$QS_FACTORY" "getPair(address,address)(address)" "$USDC" "$WETH" && \
+      cast_probe "$UNI_FACTORY" "getPool(address,address,uint24)(address)" "$USDC" "$WPOL" 100 && \
+      cast_probe "$UNI_FACTORY" "getPool(address,address,uint24)(address)" "$USDC" "$WETH" 100 && \
+      cast_probe "$USDC" "balanceOf(address)(uint256)" "$QS_FACTORY" && \
+      cast_probe "$QS_ROUTER" "factory()(address)" && \
+      cast_probe "$UNI_ROUTER" "factory()(address)" && \
+      cast_probe "$UNI_QUOTER" \
+        "quoteExactInputSingle(address,address,uint24,uint256,uint160)(uint256)" \
+        "$USDC" "$WPOL" 100 10000000 0; then
+      qs_pair="$(timeout 40s cast call "$QS_FACTORY" \
+        "getPair(address,address)(address)" "$USDC" "$WPOL" \
+        --rpc-url "$LOCAL_URL" 2>/dev/null | tail -n 1 | tr -d '[:space:]')"
+      uni_pool="$(timeout 40s cast call "$UNI_FACTORY" \
+        "getPool(address,address,uint24)(address)" "$USDC" "$WPOL" 100 \
+        --rpc-url "$LOCAL_URL" 2>/dev/null | tail -n 1 | tr -d '[:space:]')"
+      if [[ "$qs_pair" =~ ^0x[0-9a-fA-F]{40}$ ]] \
+        && [[ "$uni_pool" =~ ^0x[0-9a-fA-F]{40}$ ]] \
+        && [[ "$qs_pair" != "0x0000000000000000000000000000000000000000" ]] \
+        && [[ "$uni_pool" != "0x0000000000000000000000000000000000000000" ]] \
+        && cast_probe "$qs_pair" "getReserves()(uint112,uint112,uint32)" \
+        && cast_probe "$USDC" "balanceOf(address)(uint256)" "$qs_pair" \
+        && cast_probe "$WPOL" "balanceOf(address)(uint256)" "$qs_pair" \
+        && cast_probe "$USDC" "balanceOf(address)(uint256)" "$uni_pool" \
+        && cast_probe "$WPOL" "balanceOf(address)(uint256)" "$uni_pool"; then
+        probe_ok=1
       fi
-    done
-    if [[ "$probe_ok" == "1" ]]; then
-      cat "$candidate_log" >> "$LOG_FILE"
-      echo "ARCHIVE_FORK_SELECTED ${rpc_url} pid=${anvil_pid}" | tee -a "$LOG_FILE"
-      if [[ -n "${GITHUB_ENV:-}" ]]; then
-        echo "SELECTED_POLYGON_RPC=${rpc_url}" >> "$GITHUB_ENV"
-        echo "ANVIL_PID=${anvil_pid}" >> "$GITHUB_ENV"
-      fi
-      exit 0
     fi
+  fi
+
+  if [[ "$probe_ok" == "1" ]]; then
+    cat "$candidate_log" >> "$LOG_FILE"
+    echo "ARCHIVE_FORK_SELECTED ${rpc_url} pid=${anvil_pid}" | tee -a "$LOG_FILE"
+    if [[ -n "${GITHUB_ENV:-}" ]]; then
+      echo "SELECTED_POLYGON_RPC=${rpc_url}" >> "$GITHUB_ENV"
+      echo "ANVIL_PID=${anvil_pid}" >> "$GITHUB_ENV"
+    fi
+    exit 0
   fi
 
   stop_pid "$anvil_pid"
@@ -100,5 +128,5 @@ for rpc_url in "${RPC_CANDIDATES[@]}"; do
   echo "ARCHIVE_FORK_REJECTED ${rpc_url}" | tee -a "$LOG_FILE"
 done
 
-echo "No archive-capable Polygon RPC candidate could start and prewarm Anvil" | tee -a "$LOG_FILE"
+echo "No archive-capable Polygon RPC candidate passed the V15 DEX prewarm" | tee -a "$LOG_FILE"
 exit 1

@@ -8,6 +8,7 @@ on:
       - "simulation/synergy_econometric_supermodel_v15_2.py"
       - "scripts/validate_synergy_econometric_supermodel_v15_2.py"
       - "docs/V15_2_ECONOMIST_SUPPORTER_SYNTHESIS_V1_V15.md"
+      - "package.json"
       - ".github/workflows/synergy-econometric-v15-2.yml"
   workflow_dispatch:
     inputs:

@@ -1,0 +1,84 @@
+name: SYNERGY V13 Managed Gradient 10x50 Real Polygon
+
+on:
+  pull_request:
+    branches: [audit/synergy-qe-polygon-fork]
+    paths:
+      - "scripts/export_polygon_scanner_lib_v13.py"
+      - "scripts/scan_managed_gradient_v13.js"
+      - "scripts/validate_managed_gradient_v13.py"
+      - "docs/REPOSITORY_WIDE_MANAGED_GRADIENT_AUDIT_V13.md"
+      - ".github/workflows/managed-gradient-v13-real-polygon.yml"
+  workflow_dispatch:
+    inputs:
+      end_block:
+        description: "Optional Polygon end block; empty means latest minus confirmations"
+        required: false
+        type: string
+
+jobs:
+  managed-gradient-v13:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
+      BLOCK_COUNT: "100"
+      CONFIRMATIONS: "12"
+      EXTERNAL_POOL_TARGET: "50"
+      MAX_HOPS: "4"
+      INTERNAL_SYNTHETIC_RESERVE: "5000"
+      INTERNAL_LIQUID_DEPTH_USD: "5000"
+      INTERNAL_FEE_BPS: "30"
+      GRADIENT_SHIFT_BPS: "1000,2000,3000,4000"
+      QE_SIZE_BPS: "50,100,200,300,400,500,700,1000"
+      MIN_ROUTE_POOL_TVL_USD: "5000"
+      MIN_WALLET_PROFIT_USD: "0.01"
+      MIN_NET_PROFIT_USD: "0.25"
+      TOP_WALLET_EXACT_PER_BLOCK: "12"
+      PRIORITY_FEE_GWEI: "30"
+      END_BLOCK: ${{ inputs.end_block }}
+      NODE_OPTIONS: "--max-old-space-size=6144"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build reusable real-Polygon scanner library
+        run: |
+          python scripts/export_polygon_scanner_lib_v13.py
+          node --check scripts/_polygon_scanner_lib_v13.js
+          node --check scripts/scan_managed_gradient_v13.js
+
+      - name: Scan real 10-internal × 50-external managed gradient over 100 blocks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          node scripts/scan_managed_gradient_v13.js \
+            2>&1 | tee reports/managed_gradient_v13_scan.log
+
+      - name: Validate managed burn/mint accounting and solvency evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_managed_gradient_v13.py \
+            2>&1 | tee reports/managed_gradient_v13_validator.log
+
+      - name: Upload complete V13 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v13-managed-gradient-10x50-real-polygon-evidence
+          path: reports/*
+          if-no-files-found: error

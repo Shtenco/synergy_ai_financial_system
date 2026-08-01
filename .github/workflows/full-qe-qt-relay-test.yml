@@ -1,0 +1,59 @@
+name: Full QE QT Relay Integration
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FORK_BLOCK_NUMBER: "90790000"
+      LOCAL_FORK_URL: "http://127.0.0.1:8545"
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Install dependencies
+        run: npm ci
+      - name: Patch reserved Solidity identifier
+        run: perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
+      - name: Compile contracts
+        run: npx hardhat compile
+      - name: Start Polygon fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          anvil --fork-url "$POLYGON_RPC_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --chain-id 137 --hardfork shanghai --host 127.0.0.1 --port 8545 > reports/anvil.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -s "$LOCAL_FORK_URL" -H 'content-type: application/json' --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' | grep -q '0x89'; then exit 0; fi
+            sleep 1
+          done
+          cat reports/anvil.log
+          exit 1
+      - name: Run complete solvency and relay test
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/absolute_solvency_dividend_relay_full_fork.js --network polygonFork 2>&1 | tee reports/full-system-test.log
+      - name: Run V2 tender refill 1000-cycle test
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/qe_qt_v2_polygon_fork_renewable_cycle.js --network polygonFork 2>&1 | tee reports/qe-qt-v2-1000-cycle-test.log
+      - name: Upload full report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-qe-qt-v2-report
+          path: reports/*
+          if-no-files-found: warn

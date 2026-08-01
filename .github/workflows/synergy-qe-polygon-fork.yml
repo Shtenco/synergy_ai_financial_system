@@ -1,0 +1,61 @@
+name: Synergy QE Polygon Fork
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  fork-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORK_BLOCK_NUMBER: "90790000"
+      LOCAL_FORK_URL: "http://127.0.0.1:8545"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Select archive-capable Polygon RPC
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "POLYGON_RPC_URL=https://polygon.drpc.org" >> "$GITHUB_ENV"
+      - name: Install Node dependencies
+        run: npm ci
+      - name: Patch reserved Solidity identifier
+        run: perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
+      - name: Compile contracts
+        run: npx hardhat compile
+      - name: Start Anvil Polygon fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          anvil --fork-url "$POLYGON_RPC_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --chain-id 137 --hardfork shanghai --host 127.0.0.1 --port 8545 > reports/anvil.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -s "$LOCAL_FORK_URL" -H 'content-type: application/json' --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' | grep -q '0x89'; then exit 0; fi
+            sleep 1
+          done
+          cat reports/anvil.log
+          exit 1
+      - name: Run absolute solvency and dividend QT fork test
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/absolute_solvency_dividend_qt_fork.js --network polygonFork 2>&1 | tee reports/fork-test.log
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: absolute-solvency-dividend-results
+          path: reports/*
+          if-no-files-found: warn

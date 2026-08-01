@@ -9,7 +9,9 @@ const BLOCK_COUNT = Number(process.env.BLOCK_COUNT || 100);
 const CONFIRMATIONS = Number(process.env.CONFIRMATIONS || 12);
 const TARGET_POOL_COUNT = Number(process.env.EXTERNAL_POOL_TARGET || 50);
 const MAX_HOPS = Number(process.env.MAX_HOPS || 4);
-const TOP_APPROX_ROUTES = Number(process.env.TOP_APPROX_ROUTES || 12);
+const TOP_APPROX_ROUTES = Number(process.env.TOP_APPROX_ROUTES || 3);
+const TOP_EXECUTABLE_CANDIDATES = Number(process.env.TOP_EXECUTABLE_CANDIDATES || 20);
+const MIN_ROUTE_POOL_TVL_USD = Number(process.env.MIN_ROUTE_POOL_TVL_USD || 5000);
 const INTERNAL_SYN_RESERVE = Number(process.env.INTERNAL_SYN_RESERVE || 5000);
 const INTERNAL_USDT_RESERVE = Number(process.env.INTERNAL_USDT_RESERVE || 5000);
 const INTERNAL_FEE_BPS = Number(process.env.INTERNAL_FEE_BPS || 30);
@@ -42,7 +44,7 @@ const TOKENS = {
   GRT: { address: "0x5fe2B58c013d7601147DcdD68C143A77499f5531", decimals: 18 },
 };
 
-for (const token of Object.values(TOKENS)) token.address = ethers.getAddress(token.address);
+for (const token of Object.values(TOKENS)) token.address = ethers.getAddress(token.address.toLowerCase());
 const SYMBOL_BY_ADDRESS = Object.fromEntries(
   Object.entries(TOKENS).map(([symbol, data]) => [data.address.toLowerCase(), symbol])
 );
@@ -65,7 +67,7 @@ const V3_QUOTER_ABI = [
   "function quoteExactInputSingle(address tokenIn,address tokenOut,uint256 amountIn,uint160 limitSqrtPrice) returns(uint256 amountOut,uint16 fee)",
 ];
 
-const provider = new ethers.JsonRpcProvider(RPC_URL, 137, { staticNetwork: true });
+const provider = new ethers.JsonRpcProvider(RPC_URL, 137, { staticNetwork: true, batchMaxCount: 1 });
 const v2Factory = new ethers.Contract(QUICKSWAP_V2_FACTORY, FACTORY_V2_ABI, provider);
 const v3Factory = new ethers.Contract(QUICKSWAP_V3_FACTORY, FACTORY_V3_ABI, provider);
 const v3Quoter = new ethers.Contract(QUICKSWAP_V3_QUOTER, V3_QUOTER_ABI, provider);
@@ -115,7 +117,11 @@ function cpAmountOut(amountIn, reserveIn, reserveOut, feeBps = 30) {
 
 function cpAmountIn(amountOut, reserveIn, reserveOut, feeBps = 30) {
   if (amountOut <= 0n || amountOut >= reserveOut) return null;
-  return (reserveIn * amountOut * 10_000n) / ((reserveOut - amountOut) * BigInt(10_000 - feeBps)) + 1n;
+  return (
+    reserveIn * amountOut * 10_000n /
+      ((reserveOut - amountOut) * BigInt(10_000 - feeBps)) +
+    1n
+  );
 }
 
 function internalRoundTrip(extractedUsdt) {
@@ -272,7 +278,7 @@ function rankPools(poolsWithState, prices) {
       const tvlUsd = balance0 * price0 + balance1 * price1;
       return { ...pool, tvlUsd, endSpot10: state.spot10, feePpm: state.feePpm };
     })
-    .filter((pool) => pool.tvlUsd > 100)
+    .filter((pool) => pool.tvlUsd > 0)
     .sort((a, b) => b.tvlUsd - a.tvlUsd)
     .slice(0, TARGET_POOL_COUNT);
 }
@@ -320,6 +326,42 @@ function enumerateCycles(edges, start = "USDT", maxHops = 4) {
     if (!previous || cycle.approxMultiplier > previous.approxMultiplier) unique.set(key, cycle);
   }
   return [...unique.values()].sort((a, b) => b.approxMultiplier - a.approxMultiplier);
+}
+
+function screeningEdgeQuote(edge, amountInRaw, stateMap) {
+  const pool = edge.pool;
+  const state = stateMap.get(poolKey(pool.kind, pool.address));
+  if (!state || pool.tvlUsd < MIN_ROUTE_POOL_TVL_USD) return null;
+  const zeroForOne = edge.from === pool.symbol0;
+  let reserveIn;
+  let reserveOut;
+  let feeBps;
+  if (pool.kind === "v2") {
+    reserveIn = zeroForOne ? state.reserve0 : state.reserve1;
+    reserveOut = zeroForOne ? state.reserve1 : state.reserve0;
+    feeBps = 30;
+  } else {
+    const raw0 = numberToRaw(pool.endBalance0, pool.decimals0);
+    const raw1 = numberToRaw(pool.endBalance1, pool.decimals1);
+    reserveIn = zeroForOne ? raw0 : raw1;
+    reserveOut = zeroForOne ? raw1 : raw0;
+    feeBps = Math.max(1, Math.ceil(state.feePpm / 100));
+  }
+  if (reserveIn <= 0n || reserveOut <= 0n) return null;
+  return cpAmountOut(amountInRaw, reserveIn, reserveOut, feeBps);
+}
+
+function screeningRouteQuote(route, amountInRaw, stateMap) {
+  let amount = amountInRaw;
+  const usedPools = new Set();
+  for (const edge of route.edges) {
+    const key = poolKey(edge.pool.kind, edge.pool.address);
+    if (usedPools.has(key)) return null;
+    usedPools.add(key);
+    amount = screeningEdgeQuote(edge, amount, stateMap);
+    if (amount === null || amount <= 0n) return null;
+  }
+  return amount;
 }
 
 async function exactEdgeQuote(edge, amountInRaw, blockTag, stateMap) {
@@ -371,46 +413,66 @@ async function scanBlock(blockTag, selectedPools) {
   const valid = states.filter(Boolean);
   const stateMap = new Map(valid.map(({ pool, state }) => [poolKey(pool.kind, pool.address), state]));
   const edges = buildEdges(selectedPools, stateMap);
-  const cycles = enumerateCycles(edges, "USDT", MAX_HOPS)
-    .filter((cycle) => cycle.approxMultiplier > 1.00005)
-    .slice(0, TOP_APPROX_ROUTES);
+  const allCycles = enumerateCycles(edges, "USDT", MAX_HOPS)
+    .filter((cycle) => cycle.approxMultiplier > 0.97);
 
   const prices = deriveTokenPrices(valid);
   const polPrice = prices.WPOL || 0;
   const baseFeeWei = block.baseFeePerGas ? Number(block.baseFeePerGas) : 0;
   const gasPriceWei = Math.max(baseFeeWei * 1.2 + PRIORITY_FEE_GWEI * 1e9, PRIORITY_FEE_GWEI * 1e9);
 
-  let best = null;
-  let exactCandidates = 0;
-  for (const route of cycles) {
+  const screened = [];
+  for (const route of allCycles) {
     for (const size of QUOTE_SIZES_USDT) {
       const internal = internalRoundTrip(size);
       if (!internal) continue;
-      const amountOutRaw = await exactRouteQuote(route, internal.extractedRaw, blockTag, stateMap);
-      if (amountOutRaw === null) continue;
-      exactCandidates += 1;
-      const externalOut = rawToNumber(amountOutRaw, TOKENS.USDT.decimals);
+      const screenedOutRaw = screeningRouteQuote(route, internal.extractedRaw, stateMap);
+      if (screenedOutRaw === null) continue;
+      const screenedOut = rawToNumber(screenedOutRaw, TOKENS.USDT.decimals);
       const flashPremium = size * FLASH_PREMIUM_BPS / 10_000;
       const gasUnits = 450_000 + route.edges.length * 220_000;
       const gasUsdt = gasUnits * gasPriceWei / 1e18 * polPrice;
-      const netProfit = externalOut - internal.buybackUsdt - flashPremium - gasUsdt;
-      const profitBps = netProfit / size * 10_000;
-      const record = {
-        route: routeLabel(route),
-        hops: route.edges.length,
-        pools: route.edges.map((edge) => ({ kind: edge.pool.kind, address: edge.pool.address, from: edge.from, to: edge.to })),
-        sizeUsdt: size,
-        qeMint: internal.qeMint,
-        buybackUsdt: internal.buybackUsdt,
-        externalOutUsdt: externalOut,
-        flashPremiumUsdt: flashPremium,
-        gasUsdt,
-        netProfitUsdt: netProfit,
-        profitBps,
-        approximateMultiplier: route.approxMultiplier,
-      };
-      if (!best || record.netProfitUsdt > best.netProfitUsdt) best = record;
+      const screenedNet = screenedOut - internal.buybackUsdt - flashPremium - gasUsdt;
+      screened.push({ route, size, internal, flashPremium, gasUnits, gasUsdt, screenedOut, screenedNet });
     }
+  }
+  screened.sort((a, b) => b.screenedNet - a.screenedNet);
+  const candidates = screened.slice(0, TOP_EXECUTABLE_CANDIDATES);
+
+  let best = null;
+  let exactCandidates = 0;
+  for (const candidate of candidates) {
+    const { route, size, internal, flashPremium, gasUsdt, screenedOut, screenedNet } = candidate;
+    const amountOutRaw = await exactRouteQuote(route, internal.extractedRaw, blockTag, stateMap);
+    if (amountOutRaw === null) continue;
+    exactCandidates += 1;
+    const externalOut = rawToNumber(amountOutRaw, TOKENS.USDT.decimals);
+    const netProfit = externalOut - internal.buybackUsdt - flashPremium - gasUsdt;
+    const profitBps = netProfit / size * 10_000;
+    const record = {
+      route: routeLabel(route),
+      hops: route.edges.length,
+      pools: route.edges.map((edge) => ({
+        kind: edge.pool.kind,
+        address: edge.pool.address,
+        from: edge.from,
+        to: edge.to,
+        tvlUsd: edge.pool.tvlUsd,
+      })),
+      minimumRoutePoolTvlUsd: Math.min(...route.edges.map((edge) => edge.pool.tvlUsd)),
+      sizeUsdt: size,
+      qeMint: internal.qeMint,
+      buybackUsdt: internal.buybackUsdt,
+      screenedExternalOutUsdt: screenedOut,
+      screenedNetProfitUsdt: screenedNet,
+      externalOutUsdt: externalOut,
+      flashPremiumUsdt: flashPremium,
+      gasUsdt,
+      netProfitUsdt: netProfit,
+      profitBps,
+      approximateMultiplier: route.approxMultiplier,
+    };
+    if (!best || record.netProfitUsdt > best.netProfitUsdt) best = record;
   }
 
   const accepted = Boolean(best && best.netProfitUsdt >= MIN_NET_PROFIT_USDT);
@@ -418,7 +480,8 @@ async function scanBlock(blockTag, selectedPools) {
     block: blockTag,
     timestamp: Number(block.timestamp),
     poolStatesRead: valid.length,
-    approximateCycles: cycles.length,
+    approximateCycles: allCycles.length,
+    screenedCandidates: screened.length,
     exactCandidates,
     polPriceUsdt: polPrice,
     gasPriceGwei: gasPriceWei / 1e9,
@@ -487,6 +550,8 @@ async function main() {
     discoveredLivePools: discovered.length,
     selectedExternalPools: selectedPools.length,
     maxHops: MAX_HOPS,
+    topExecutableCandidates: TOP_EXECUTABLE_CANDIDATES,
+    minimumRoutePoolTvlUsd: MIN_ROUTE_POOL_TVL_USD,
     quoteSizesUsdt: QUOTE_SIZES_USDT,
     internalModel: {
       synReserve: INTERNAL_SYN_RESERVE,
@@ -512,7 +577,7 @@ async function main() {
     blocks,
     methodology: {
       poolPrices: "Real QuickSwap V2 reserves and QuickSwap V3 Algebra globalState at each historical Polygon block",
-      routeSearch: "All simple USDT cycles up to MAX_HOPS over 50 selected real pools; approximate screen followed by exact V2 math and historical V3 quoter calls",
+      routeSearch: "All simple USDT cycles up to MAX_HOPS over 50 selected real pools; liquidity-capacity screen followed by exact V2 math and historical V3 quoter calls",
       acceptance: "External output minus exact internal QE/QT buyback, flash premium and gas converted through real WPOL/USDT price",
       warning: "Historical quote availability and public-RPC rate limits can reduce exactCandidates; accepted opportunities are modelled executable quotes, not guaranteed private-orderflow fills",
     },
@@ -521,7 +586,7 @@ async function main() {
   const reports = path.join(process.cwd(), "reports");
   fs.mkdirSync(reports, { recursive: true });
   fs.writeFileSync(path.join(reports, "polygon_50_pool_100_block_scan.json"), JSON.stringify(result, null, 2));
-  const headers = ["block", "timestamp", "accepted", "poolStatesRead", "approximateCycles", "exactCandidates", "route", "hops", "sizeUsdt", "externalOutUsdt", "buybackUsdt", "flashPremiumUsdt", "gasUsdt", "netProfitUsdt", "profitBps", "polPriceUsdt", "gasPriceGwei"];
+  const headers = ["block", "timestamp", "accepted", "poolStatesRead", "approximateCycles", "screenedCandidates", "exactCandidates", "route", "hops", "sizeUsdt", "externalOutUsdt", "buybackUsdt", "flashPremiumUsdt", "gasUsdt", "netProfitUsdt", "profitBps", "polPriceUsdt", "gasPriceGwei"];
   const lines = [headers.join(",")];
   for (const row of blocks) {
     const best = row.best || {};

@@ -15,6 +15,7 @@ on:
       - "simulation/stateful_supercycle_v8_10x10.py"
       - "scripts/validate_stateful_supercycle_v8_10x10.py"
       - "scripts/validate_external_revenue_v15.py"
+      - "scripts/patch_external_revenue_v15_quoter.py"
       - "docs/STATEFUL_SUPERCYCLE_V8.md"
       - "docs/V15_EXTERNAL_REVENUE_FORK.md"
       - ".github/workflows/stateful-supercycle-v8.yml"
@@ -60,8 +61,21 @@ jobs:
           python simulation/stateful_supercycle_v8_10x10.py \
             2>&1 | tee reports/stateful_supercycle_v8_10x10_shadow.log
 
-      - name: Patch legacy reserved Solidity identifier
-        run: perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
+      - name: Restore legacy V8 Paris compilation boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
+          rm -rf contracts/v15
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("hardhat.config.js")
+          text = path.read_text()
+          text = text.replace('evmVersion: "cancun"', 'evmVersion: "paris"')
+          text = text.replace('hardfork: "cancun"', 'hardfork: "shanghai"')
+          text = text.replace('cancun: 0', 'shanghai: 0')
+          path.write_text(text)
+          PY
 
       - name: Compile direct V8 sources
         run: npx hardhat compile
@@ -74,7 +88,7 @@ jobs:
             --fork-url "$POLYGON_RPC_URL" \
             --fork-block-number "$FORK_BLOCK_NUMBER" \
             --chain-id 137 \
-            --hardfork cancun \
+            --hardfork shanghai \
             --host 127.0.0.1 \
             --port 8545 \
             > reports/stateful_supercycle_v8_10x10_anvil.log 2>&1 &
@@ -146,6 +160,7 @@ jobs:
           set -euo pipefail
           mkdir -p reports
           perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
+          python scripts/patch_external_revenue_v15_quoter.py
           node --check test/external_revenue_v15_polygon_fork.js
           python -m py_compile scripts/validate_external_revenue_v15.py
           npx hardhat compile 2>&1 | tee reports/v15_external_revenue_compile.log

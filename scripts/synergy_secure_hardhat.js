@@ -30,6 +30,31 @@ if (ignored.status !== 0) fail("ENV path is not ignored by git");
 const parsed = dotenv.parse(fs.readFileSync(envPath));
 if (!parsed.OWNER_PRIVATE_KEY) fail("OWNER_PRIVATE_KEY missing");
 if (!/^(0x)?[0-9a-fA-F]{64}$/.test(parsed.OWNER_PRIVATE_KEY)) fail("OWNER_PRIVATE_KEY format invalid");
+if (parsed.KEY_ROTATED_ACK !== "I_CREATED_A_NEW_UNSHARED_KEY") {
+  fail("Refusing key use: create a new key that has never been pasted, uploaded, logged, or committed");
+}
+
+if (parsed.EXECUTION_MODE === "execute") {
+  const gateArg = parsed.MAINNET_GATE_REPORT || "reports/bullish_quickswap_mainnet_stop_first10.json";
+  const gatePath = path.resolve(repo, gateArg);
+  if (!gatePath.startsWith(repo + path.sep) || !fs.existsSync(gatePath)) {
+    fail("Mainnet gate report is missing");
+  }
+  let gate;
+  try {
+    gate = JSON.parse(fs.readFileSync(gatePath, "utf8"));
+  } catch (_) {
+    fail("Mainnet gate report is invalid JSON");
+  }
+  const positive =
+    gate.decision === "ALLOW_MAINNET_DEPLOYMENT" &&
+    Number(gate.netGrowthAfterGasUsdt) > 0 &&
+    gate.privateKeyLoaded === false &&
+    gate.transactionBroadcast === false;
+  if (!positive) {
+    fail("MAINNET BLOCKED: pinned-fork first-ten growth did not exceed full gas");
+  }
+}
 
 const child = spawnSync(
   process.platform === "win32" ? "npx.cmd" : "npx",

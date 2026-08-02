@@ -1,0 +1,128 @@
+name: Synergy Shielded V5 Exact Gate
+
+on:
+  pull_request:
+    paths:
+      - "contracts/microcycle/RebaseSynaExactV3.sol"
+      - "contracts/microcycle/BullishQuickSwapRefillV2.sol"
+      - "contracts/microcycle/BullishQuickSwapShieldedV5.sol"
+      - "contracts/microcycle/SynergyQuickSwapBootstrapV5.sol"
+      - "test/synergy_shielded_v5_polygon_fork.js"
+      - "test/synergy_shielded_v5_security_only.js"
+      - "hardhat.config.js"
+      - ".github/workflows/synergy-shielded-v5-parallel.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: security
+            test_file: test/synergy_shielded_v5_security_only.js
+            grep: "fails closed on zero quote"
+          - id: economics
+            test_file: test/synergy_shielded_v5_polygon_fork.js
+            grep: "remains positive after complete constructor V5 setup"
+          - id: refill
+            test_file: test/synergy_shielded_v5_polygon_fork.js
+            grep: "passes protected robot refill"
+    name: exact-v5-${{ matrix.id }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      FORK_SOURCE_URL: https://polygon.drpc.org
+      POLYGON_RPC_URL: http://127.0.0.1:8545
+      LOCAL_FORK_URL: http://127.0.0.1:8545
+      FORK_BLOCK_NUMBER: "90790000"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Bind immutable commit
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          mkdir -p reports/exact-v5-${{ matrix.id }}
+          git rev-parse HEAD | tee reports/exact-v5-${{ matrix.id }}/commit.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Compile exact deploy source
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          rm -rf artifacts cache
+          node --check ${{ matrix.test_file }}
+          npx hardhat compile --force 2>&1 | tee reports/exact-v5-${{ matrix.id }}/compile.log
+          sha256sum \
+            hardhat.config.js \
+            contracts/microcycle/RebaseSynaExactV3.sol \
+            contracts/microcycle/BullishQuickSwapRefillV2.sol \
+            contracts/microcycle/BullishQuickSwapShieldedV5.sol \
+            contracts/microcycle/SynergyQuickSwapBootstrapV5.sol \
+            test/synergy_shielded_v5_polygon_fork.js \
+            test/synergy_shielded_v5_security_only.js \
+            > reports/exact-v5-${{ matrix.id }}/source-sha256.txt
+      - name: Start isolated pinned Polygon fork
+        run: |
+          set -euo pipefail
+          anvil \
+            --fork-url "$FORK_SOURCE_URL" \
+            --fork-block-number "$FORK_BLOCK_NUMBER" \
+            --chain-id 137 \
+            --hardfork cancun \
+            --host 127.0.0.1 \
+            --port 8545 \
+            > reports/exact-v5-${{ matrix.id }}/anvil.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -s "$LOCAL_FORK_URL" \
+              -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+              | grep -q '0x89'; then exit 0; fi
+            sleep 1
+          done
+          cat reports/exact-v5-${{ matrix.id }}/anvil.log
+          exit 1
+      - name: Execute exact ${{ matrix.id }} proof
+        run: |
+          set -euo pipefail
+          npx hardhat test ${{ matrix.test_file }} \
+            --network polygon --grep '${{ matrix.grep }}' \
+            2>&1 | tee reports/exact-v5-${{ matrix.id }}/fork.log
+      - name: Validate economics report
+        if: matrix.id == 'economics'
+        run: |
+          set -euo pipefail
+          python - <<'PY' | tee reports/exact-v5-economics/validator.log
+          import json
+          from pathlib import Path
+          r = json.loads(Path("reports/shielded-v5/first10.json").read_text())
+          assert r["chainId"] == 137
+          assert r["forkBlock"] == 90790000
+          assert r["netGrowthAfterGasUsdt"] > 0
+          assert r["verdict"] == "PASS_POSITIVE_SHIELDED_FIRST10"
+          Path("reports/exact-v5-economics/first10.json").write_text(json.dumps(r, indent=2))
+          print(json.dumps(r, indent=2))
+          PY
+      - name: Bind evidence
+        run: |
+          set -euo pipefail
+          find reports/exact-v5-${{ matrix.id }} -maxdepth 1 -type f -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            > reports/exact-v5-${{ matrix.id }}/evidence-sha256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synergy-exact-v5-${{ matrix.id }}
+          path: reports/exact-v5-${{ matrix.id }}
+          if-no-files-found: warn

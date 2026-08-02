@@ -1,0 +1,21 @@
+{
+  "chainId": 137,
+  "deployer": "0x6946999DBCE63b140B1bB9D475F7c357130909E5",
+  "bootstrapAddress": "0x7f1E6A3AED7F0661C7e03884a04acbDB45DE077e",
+  "nonceSwap": 40295,
+  "nonceApprove": 40296,
+  "nonceDeploy": 40297,
+  "gasPriceWei": 350529980158,
+  "swapGasLimit": 300000,
+  "approveGasLimit": 100000,
+  "deployGasLimit": 18000000,
+  "fundingPolWei": 30000000000000000000,
+  "minimumUsdtOutRaw": 2109958,
+  "swapDeadline": 1785667130,
+  "maximumTotalExposureWei": 36449751634907200000,
+  "swapTxHash": "0x8456becad6712004c1c8d724b0afa772897a1ec95092e0b05b97844091ffa8e9",
+  "approveTxHash": "0x44e22213b7708537cd6a78745171b9df69a226dc605c6b09c63925be0a3e4e43",
+  "deployTxHash": "0xa9213860c5e9897ed886ed04191c607697103314cf657ee3ccd977b1a400b517",
+  "saltHash": "0xf13ffe6ed8d50857a5aa43ea6ceca68c563a91b2b986afc369c5c5a600b91519",
+  "privateKeyIncluded": false
+}

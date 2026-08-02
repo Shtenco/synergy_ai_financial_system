@@ -1,0 +1,53 @@
+{
+  "scenario": "BULLISH_QUICKSWAP_DEAL_SCALE_GRID",
+  "status": "SUPERSEDED_BY_EXACT_DEPLOYED_CONTRACT_TEST",
+  "network": {
+    "chainId": 137,
+    "forkBlock": 90790000
+  },
+  "capitalUnchanged": {
+    "poolUsdt": 1.0,
+    "robotUsdt": 1.0,
+    "initialMetricUsdt": 3.0
+  },
+  "temporaryGridSelection": {
+    "dealScaleBps": 15000,
+    "buyUsdt": 0.15,
+    "sellNotionalUsdt": 0.06,
+    "gridNetGrowthAfterGasUsdt": 0.14224667327610313,
+    "gridGasCoverageMultiple": 2.063380822350465,
+    "status": "REJECTED_AFTER_EXACT_CHILD_CONTRACT_GAS_MEASUREMENT"
+  },
+  "exactScaled150Measurement": {
+    "grossGrowthUsdt": 0.276015,
+    "fullGasUsdt": 0.18885462699388014,
+    "netGrowthAfterGasUsdt": 0.08716037300611987,
+    "gasCoverageMultiple": 1.4615209825330058,
+    "netAt150PctGasUsdt": -0.007266940490820217,
+    "verdict": "STOP_NON_ROBUST"
+  },
+  "finalSelection": {
+    "report": "reports/bullish_quickswap_scaled175_first10.json",
+    "controller": "BullishQuickSwapScaled175",
+    "dealScaleBps": 17500,
+    "buyUsdt": 0.175,
+    "sellNotionalUsdt": 0.07,
+    "reason": "The exact deployed Scaled175 controller passed full gas accounting, at least 1.5x gas coverage, and a +50% gas stress."
+  },
+  "gridEvidence": {
+    "repository": "Shtenco/shtencoauantai.github.io",
+    "branch": "ci/bullish-cb-microcycle",
+    "commit": "7f069d0e560d3c02f27938f10c664f7df476fb28",
+    "workflowRunId": 30737502634,
+    "workflowJobId": 91468876638,
+    "artifactId": 8830140417,
+    "artifactSha256": "443c91cf1a5dd269cd4441b1075991a71df8bd3385c02ea7e4e0fcb7d7dbe9d9"
+  },
+  "security": {
+    "mainnetAuthorized": false,
+    "privateKeyLoaded": false,
+    "transactionSigned": false,
+    "transactionBroadcast": false
+  },
+  "caveat": "Grid runs used pinned-fork mark-to-market accounting. The exact child-contract deployment gas is authoritative for final selection."
+}

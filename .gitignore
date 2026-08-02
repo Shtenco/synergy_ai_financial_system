@@ -22,3 +22,12 @@ venv/
 Thumbs.db
 .vscode/
 .idea/
+
+# SYNERGY RL local runtime vault and run evidence
+runtime/synergy_agent/local/**
+!runtime/synergy_agent/local/.gitkeep
+runtime/synergy_agent/STOP
+runtime/synergy_agent/ARMED
+runtime/synergy_agent/state/
+runtime/synergy_agent/logs/
+synergy_rl_output/

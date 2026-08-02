@@ -1,0 +1,30 @@
+name: SYNA Polygon Mainnet Preflight
+
+on:
+  pull_request:
+    paths:
+      - "scripts/synergy_polygon_mainnet_preflight.py"
+      - ".github/workflows/synergy-polygon-mainnet-preflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      POLYGON_RPC_URL: https://polygon.drpc.org
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Query Polygon mainnet
+        run: python scripts/synergy_polygon_mainnet_preflight.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synergy-polygon-mainnet-preflight
+          path: reports/synergy_polygon_mainnet_preflight.json
+          if-no-files-found: error

@@ -1,0 +1,73 @@
+{
+  "scenario": "BULLISH_QUICKSWAP_SCALED175_MAINNET_GATE",
+  "criterion": "DELTA_TVL_PLUS_ROBOT_PLUS_CB_MINUS_FULL_SETUP_AND_RUNTIME_GAS_POSITIVE_WITH_1_5X_GAS_COVERAGE_AND_REFILL_REGRESSION",
+  "forkGate": "PASS",
+  "decision": "STOP_MAINNET_DEPLOYMENT",
+  "reason": "FORK_GATES_PASSED_BUT_NO_FRESH_UNSHARED_KEY_OR_EXPLICIT_NEW_EXECUTION",
+  "network": {
+    "chainId": 137,
+    "forkBlock": 90790000
+  },
+  "selectedImplementation": {
+    "token": "RebaseSynaExactV3",
+    "controller": "BullishQuickSwapScaled175",
+    "dealScaleBps": 17500,
+    "buyCountPerCycle": 2,
+    "buyUsdt": 0.175,
+    "sellCountPerCycle": 5,
+    "sellNotionalUsdt": 0.07,
+    "initialPoolUsdt": 1.0,
+    "initialRobotUsdt": 1.0,
+    "cycles": 10,
+    "trades": 70
+  },
+  "firstTen": {
+    "initialMetricUsdt": 3.0,
+    "finalMetricUsdt": 3.368744,
+    "grossGrowthUsdt": 0.368744,
+    "setupGasPol": 1.8370711443605836,
+    "runtimeGasPol": 0.4423472762695998,
+    "fullGasPol": 2.2794184206301833,
+    "fullGasUsdt": 0.17935527456873895,
+    "netGrowthAfterGasUsdt": 0.18938872543126106,
+    "gasCoverageMultiple": 2.0559417663441883,
+    "netAt150PctGasUsdt": 0.09971108814689161,
+    "priceMultiple": 1.6862750025,
+    "verdict": "PASS_ROBUST_POSITIVE_FIRST_10"
+  },
+  "refills": {
+    "refillRegressionPassed": true,
+    "robotRefillEvents": 1,
+    "robotUsdtBefore": 1.0,
+    "robotUsdtAfter": 1.0404,
+    "gasRefillEvents": 1,
+    "treasuryBeforeGasRefillUsdt": 0.001511,
+    "gasRefillPol": 0.001,
+    "gasRefillSpentUsdt": 0.000079,
+    "verdict": "PASS_BOUNDED_ROBOT_AND_EXACT_POL_REFILL"
+  },
+  "security": {
+    "uploadedKeyUsed": false,
+    "privateKeyLoaded": false,
+    "transactionSigned": false,
+    "transactionBroadcast": false,
+    "quickswapMainnetLiquidityAdded": false,
+    "mainnetContractsDeployed": false,
+    "reasonKeyRejected": "KEY_WAS_DISCLOSED_IN_CHAT_AND_MUST_BE_ROTATED"
+  },
+  "evidence": {
+    "publicCiRepository": "Shtenco/shtencoauantai.github.io",
+    "branch": "ci/bullish-cb-microcycle",
+    "firstTenCommit": "8b2e35b0c844e55cd11ea95c06d6aa12d2ed042a",
+    "firstTenWorkflowRunId": 30738246322,
+    "firstTenWorkflowJobId": 91470843198,
+    "firstTenArtifactId": 8830369430,
+    "refillCommit": "26d137492de9e2d5b2d734b331f6051cba4f1c40",
+    "refillWorkflowRunId": 30738543881,
+    "refillWorkflowJobId": 91471666283,
+    "refillArtifactId": 8830481989,
+    "compilePassed": true,
+    "firstTenPassed": true,
+    "refillRegressionPassed": true
+  }
+}

@@ -1,0 +1,17 @@
+# Everything in local/ is runtime-only and must never be committed.
+local/**
+!local/.gitkeep
+
+# Decrypted secrets, encrypted vaults, locks, run state and emergency flags.
+*.env
+*.env.*
+*.age
+*.enc
+*.key
+*.pem
+*.seed
+*.lock
+STOP
+ARMED
+state/
+logs/

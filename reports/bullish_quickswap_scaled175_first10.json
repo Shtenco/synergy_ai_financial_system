@@ -1,0 +1,72 @@
+{
+  "scenario": "BULLISH_QUICKSWAP_SCALED175_FIRST10",
+  "decision": "KEEP_MAINNET_BLOCKED_PENDING_REFILL_REGRESSION",
+  "network": {
+    "chainId": 137,
+    "forkBlock": 90790000
+  },
+  "implementation": {
+    "token": "RebaseSynaExactV3",
+    "controller": "BullishQuickSwapScaled175",
+    "dealScaleBps": 17500,
+    "buyUsdt": 0.175,
+    "buysPerCycle": 2,
+    "sellNotionalUsdt": 0.07,
+    "sellsPerCycle": 5,
+    "cycles": 10,
+    "trades": 70
+  },
+  "capital": {
+    "initialPoolUsdt": 1.0,
+    "initialRobotUsdt": 1.0,
+    "initialMetricUsdt": 3.0,
+    "finalMetricUsdt": 3.368744
+  },
+  "result": {
+    "grossGrowthUsdt": 0.368744,
+    "setupGasPol": 1.9828533814456064,
+    "runtimeGasPol": 0.48057420815209506,
+    "fullGasPol": 2.4634275895977016,
+    "fullGasUsdt": 0.1938339743654224,
+    "netGrowthAfterGasUsdt": 0.1749100256345776,
+    "gasCoverageMultiple": 1.9023703208232798,
+    "netAt150PctGasUsdt": 0.07799303845186639,
+    "priceMultiple": 1.6862750025,
+    "verdict": "PASS_ROBUST_POSITIVE_FIRST_10"
+  },
+  "comparison": {
+    "scaled150Exact": {
+      "buyUsdt": 0.15,
+      "sellNotionalUsdt": 0.06,
+      "netGrowthAfterGasUsdt": 0.08716037300611987,
+      "gasCoverageMultiple": 1.4615209825330058,
+      "netAt150PctGasUsdt": -0.007266940490820217,
+      "verdict": "STOP_NON_ROBUST"
+    },
+    "reasonScaled175Selected": "Scaled150 was positive after measured gas but failed the 1.5x gas-coverage and +50% gas-stress requirements."
+  },
+  "evidence": {
+    "publicCiRepository": "Shtenco/shtencoauantai.github.io",
+    "branch": "ci/bullish-cb-microcycle",
+    "commit": "19761f9e2b819b3956581d85f880358e3380dc91",
+    "workflowRunId": 30738063644,
+    "workflowJobId": 91470369212,
+    "artifactId": 8830306668,
+    "artifactSha256": "87197e9e2628cf5c363f45375e70c7b242e865f5a369a81f4bd222968aa293d6",
+    "compilePassed": true,
+    "forkPassed": true,
+    "validatorPassed": true,
+    "hashBindingPassed": true
+  },
+  "security": {
+    "mainnetAuthorized": false,
+    "refillRegressionPassed": false,
+    "privateKeyLoaded": false,
+    "transactionSigned": false,
+    "transactionBroadcast": false,
+    "mainnetContractsDeployed": false,
+    "quickswapMainnetLiquidityAdded": false,
+    "disclosedKeyUsed": false
+  },
+  "caveat": "The measured metric is pinned-fork mark-to-market TVL plus robot plus central-bank value. It is not proof of externally realized profit, does not include adversarial MEV or live market competition, and does not guarantee the same result on mainnet."
+}

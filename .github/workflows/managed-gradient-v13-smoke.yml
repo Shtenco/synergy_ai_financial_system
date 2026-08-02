@@ -1,0 +1,58 @@
+name: SYNERGY V13 Managed Gradient Smoke
+
+on:
+  pull_request:
+    branches: [audit/synergy-qe-polygon-fork]
+    paths:
+      - ".github/workflows/managed-gradient-v13-smoke.yml"
+
+jobs:
+  v13-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
+      BLOCK_COUNT: "1"
+      CONFIRMATIONS: "12"
+      EXTERNAL_POOL_TARGET: "50"
+      MAX_HOPS: "4"
+      INTERNAL_SYNTHETIC_RESERVE: "5000"
+      INTERNAL_LIQUID_DEPTH_USD: "5000"
+      INTERNAL_FEE_BPS: "30"
+      GRADIENT_SHIFT_BPS: "1000,2000,3000,4000"
+      QE_SIZE_BPS: "50,100,200,300,400,500,700,1000"
+      MIN_ROUTE_POOL_TVL_USD: "5000"
+      MIN_WALLET_PROFIT_USD: "0.01"
+      MIN_NET_PROFIT_USD: "0.25"
+      TOP_WALLET_EXACT_PER_BLOCK: "1"
+      PRIORITY_FEE_GWEI: "30"
+      NODE_OPTIONS: "--max-old-space-size=6144"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - name: Build scanner library
+        run: |
+          python scripts/export_polygon_scanner_lib_v13.py
+          node --check scripts/_polygon_scanner_lib_v13.js
+          node --check scripts/scan_managed_gradient_v13.js
+      - name: Run one real Polygon block
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          node scripts/scan_managed_gradient_v13.js 2>&1 | tee reports/managed_gradient_v13_smoke.log
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v13-managed-gradient-smoke-evidence
+          path: reports/*
+          if-no-files-found: error

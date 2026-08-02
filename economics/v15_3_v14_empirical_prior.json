@@ -1,0 +1,66 @@
+{
+  "name": "SYNERGY V15.3 empirical prior from strict V14 near misses",
+  "evidenceClass": "REAL_POLYGON_BLOCK_STATE_STRICT_NEAR_MISS_PRIOR_NOT_TRANSACTION_PANEL",
+  "source": {
+    "githubActionsRun": 30709889373,
+    "artifactId": 8821627849,
+    "artifactName": "synergy-v14-strict-stateful-closed-loop-evidence",
+    "artifactDigest": "sha256:b7f6876dcb0ac0f5491d01c45acfda5fcbb4be3b7eadeda79cfca9e5aa50f935",
+    "startBlock": 91266209,
+    "endBlock": 91266308,
+    "strictExactCandidates": 396,
+    "acceptedCycles": 0,
+    "nearMissObservations": 66
+  },
+  "policy": {
+    "strictNetEdgeBps": 2.685148,
+    "reinvestmentShare": 0.8
+  },
+  "routeFamilySummary": [
+    {
+      "forwardRoute": "DAI→USDT[v3]",
+      "restorationRoute": "USDT→USDC[v3]→DAI[v3]",
+      "observations": 33,
+      "meanImprovementToOneCentProfitBps": 2.9310621226008973,
+      "medianImprovementToOneCentProfitBps": 2.9083841749427997,
+      "minimumImprovementToOneCentProfitBps": 2.6851509460358636,
+      "maximumImprovementToOneCentProfitBps": 3.2263846830535847,
+      "medianPreGasDeficitBps": 1.1916413375274089,
+      "medianGasBps": 1.4965413514138441,
+      "fixedEffectVsWorstFamilyBps": -20.81330018418032
+    },
+    {
+      "forwardRoute": "DAI→USDT[v3]",
+      "restorationRoute": "USDT→DAI[v2]",
+      "observations": 19,
+      "meanImprovementToOneCentProfitBps": 22.756310810568504,
+      "medianImprovementToOneCentProfitBps": 22.78645079361248,
+      "minimumImprovementToOneCentProfitBps": 22.67767121450344,
+      "medianPreGasDeficitBps": 21.217184078264005,
+      "medianGasBps": 1.359507491315063,
+      "fixedEffectVsWorstFamilyBps": -0.9880514962127121
+    },
+    {
+      "forwardRoute": "DAI→USDC[v3]→USDT[v3]",
+      "restorationRoute": "USDT→DAI[v2]",
+      "observations": 14,
+      "meanImprovementToOneCentProfitBps": 23.744362306781216,
+      "medianImprovementToOneCentProfitBps": 23.743081233917728,
+      "minimumImprovementToOneCentProfitBps": 23.725947764319653,
+      "medianPreGasDeficitBps": 22.028164313004204,
+      "medianGasBps": 1.494439273154625,
+      "fixedEffectVsWorstFamilyBps": 0.0
+    }
+  ],
+  "strongestPrior": {
+    "routeFamily": "DAI→USDT[v3] then USDT→USDC[v3]→DAI[v3]",
+    "minimumImprovementToOneCentProfitBps": 2.6851509460358636,
+    "medianImprovementWithinStrongestFamilyBps": 2.9083841749427997,
+    "interpretation": "The strict 2.685148 bps hurdle is an observed best-case frontier, while the strongest route-family median was about 2.91 bps. The transaction panel must explain when order flow moves realized net edge above that frontier."
+  },
+  "limitations": [
+    "Rows are real historical block-state near misses, not individual victim transactions.",
+    "Route-family fixed effects are descriptive and must not be used as live execution coefficients.",
+    "No value in this prior is counted as revenue or reinvested."
+  ]
+}

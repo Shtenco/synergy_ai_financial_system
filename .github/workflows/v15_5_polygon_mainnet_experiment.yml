@@ -1,0 +1,152 @@
+name: SYNERGY V15.5 Polygon Mainnet Atomic ADDLP Experiment
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "fork_only, deploy_seed, deploy_seed_and_probe, probe_existing, recover_existing"
+        required: true
+        default: "fork_only"
+        type: choice
+        options:
+          - fork_only
+          - deploy_seed
+          - deploy_seed_and_probe
+          - probe_existing
+          - recover_existing
+      experiment_address:
+        description: "Required for probe_existing or recover_existing"
+        required: false
+        type: string
+      confirm_mainnet:
+        description: "Type V15_5_MAINNET_10_POL_SCIENTIFIC_EXPERIMENT for any mainnet write"
+        required: false
+        type: string
+      broadcast_expected_revert:
+        description: "Broadcast one expected-revert cycle after static preflight"
+        required: false
+        default: false
+        type: boolean
+      prior_risk_pol:
+        description: "Required for probe_existing: already spent gas plus conservatively counted seed POL"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: synergy-v15-5-polygon-mainnet-experiment
+  cancel-in-progress: false
+
+jobs:
+  experiment:
+    runs-on: [self-hosted, linux, x64, synergy-v15-mainnet]
+    environment: polygon-mainnet-experiment
+    timeout-minutes: 240
+    env:
+      POLYGON_RPC_URL: ${{ secrets.POLYGON_ARCHIVE_RPC_URL }}
+      OWNER_PRIVATE_KEY: ${{ secrets.V155_DISPOSABLE_OWNER_PRIVATE_KEY }}
+      V155_REINVESTMENT_VAULT: ${{ secrets.V155_REINVESTMENT_VAULT }}
+      V155_RETAINED_TREASURY: ${{ secrets.V155_RETAINED_TREASURY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install and compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$POLYGON_RPC_URL"
+          npm ci
+          mkdir -p reports
+          node --check scripts/deploy_v15_5_polygon_mainnet.js
+          node --check scripts/run_v15_5_polygon_mainnet_experiment.js
+          node --check scripts/recover_v15_5_polygon_seed.js
+          node --check test/v15_5_mainnet_addlp_polygon_fork.js
+          python -m py_compile scripts/validate_v15_5_polygon_experiment.py
+          npx hardhat compile 2>&1 | tee reports/v15_5_compile.log
+
+      - name: Mandatory real Polygon fork falsification test
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run test:v15.5:fork 2>&1 | tee reports/v15_5_fork.log
+          npm run validate:v15.5 2>&1 | tee reports/v15_5_validator_before_mainnet.log
+
+      - name: Validate explicit mainnet approval
+        if: ${{ inputs.mode != 'fork_only' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.confirm_mainnet }}" = "V15_5_MAINNET_10_POL_SCIENTIFIC_EXPERIMENT"
+          test -n "$OWNER_PRIVATE_KEY"
+
+      - name: Deploy and seed isolated pools
+        if: ${{ inputs.mode == 'deploy_seed' || inputs.mode == 'deploy_seed_and_probe' }}
+        shell: bash
+        env:
+          CONFIRM_V155_DEPLOY: DEPLOY_V15_5_POLYGON_MAINNET
+        run: |
+          set -euo pipefail
+          npm run deploy:v15.5:polygon 2>&1 | tee reports/v15_5_deploy.log
+          python - <<'PY' >> "$GITHUB_ENV"
+          import json
+          from pathlib import Path
+          report = json.loads(Path('reports/v15_5_polygon_mainnet_deployment.json').read_text())
+          print('V155_EXPERIMENT_ADDRESS=' + report['deployed']['experiment'])
+          PY
+
+      - name: Use existing experiment address
+        if: ${{ inputs.mode == 'probe_existing' || inputs.mode == 'recover_existing' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ inputs.experiment_address }}"
+          echo "V155_EXPERIMENT_ADDRESS=${{ inputs.experiment_address }}" >> "$GITHUB_ENV"
+
+      - name: Static mainnet preflight
+        if: ${{ inputs.mode == 'deploy_seed_and_probe' || inputs.mode == 'probe_existing' }}
+        shell: bash
+        env:
+          V155_PRIOR_RISK_POL: ${{ inputs.prior_risk_pol }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.mode }}" = "probe_existing" ]; then test -n "$V155_PRIOR_RISK_POL"; fi
+          npm run run:v15.5:polygon 2>&1 | tee reports/v15_5_mainnet_preflight.log
+
+      - name: Broadcast exactly one expected-revert probe
+        if: ${{ (inputs.mode == 'deploy_seed_and_probe' || inputs.mode == 'probe_existing') && inputs.broadcast_expected_revert }}
+        shell: bash
+        env:
+          V155_BROADCAST_REVERT_PROBE: I_ACCEPT_ONE_REVERTING_MAINNET_TRANSACTION
+          V155_PRIOR_RISK_POL: ${{ inputs.prior_risk_pol }}
+        run: |
+          set -euo pipefail
+          npm run run:v15.5:polygon 2>&1 | tee reports/v15_5_mainnet_probe.log
+          npm run validate:v15.5 2>&1 | tee reports/v15_5_validator_after_probe.log
+
+      - name: Recover protocol-owned seed liquidity
+        if: ${{ inputs.mode == 'recover_existing' }}
+        shell: bash
+        env:
+          CONFIRM_V155_RECOVERY: RECOVER_V15_5_SEED_LIQUIDITY
+        run: |
+          set -euo pipefail
+          npm run recover:v15.5:polygon 2>&1 | tee reports/v15_5_recovery.log
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v15-5-polygon-mainnet-atomic-addlp-experiment
+          path: reports/v15_5_*
+          if-no-files-found: error
+          compression-level: 6

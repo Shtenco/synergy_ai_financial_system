@@ -1,0 +1,148 @@
+name: SYNERGY V15.1 Strict Historical External Revenue
+
+on:
+  pull_request:
+    branches: [audit/synergy-qe-polygon-fork]
+    paths:
+      - "hardhat.config.js"
+      - "package.json"
+      - "contracts/v15_1/**"
+      - "test/external_revenue_v15_1_unit.js"
+      - "test/external_revenue_v15_1_historical_polygon_fork.js"
+      - "scripts/audit_repository_v15_1.py"
+      - "scripts/discover_historical_victim_v15_1.js"
+      - "scripts/validate_external_revenue_v15_1.py"
+      - "scripts/start_polygon_archive_fork.sh"
+      - "docs/V15_1_REPOSITORY_AUDIT_AND_STRICT_DESIGN.md"
+      - ".github/workflows/synergy-v15-1-strict-historical.yml"
+  workflow_dispatch:
+    inputs:
+      scan_start_block:
+        description: "First historical Polygon block to inspect"
+        required: false
+        default: "91266209"
+        type: string
+      scan_end_block:
+        description: "Last historical Polygon block to inspect"
+        required: false
+        default: "91266308"
+        type: string
+      minimum_victim_usdc:
+        description: "Minimum actual QuickSwap V2 USDC input"
+        required: false
+        default: "1000"
+        type: string
+
+concurrency:
+  group: synergy-v15-1-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  strict-historical-external-revenue:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
+      LOCAL_FORK_URL: "http://127.0.0.1:8545"
+      V151_SCAN_START_BLOCK: ${{ inputs.scan_start_block || '91266209' }}
+      V151_SCAN_END_BLOCK: ${{ inputs.scan_end_block || '91266308' }}
+      V151_MIN_VICTIM_USDC: ${{ inputs.minimum_victim_usdc || '1000' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit the complete checkout before V15.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python -m py_compile scripts/audit_repository_v15_1.py
+          python scripts/audit_repository_v15_1.py \
+            2>&1 | tee reports/v15_1_repository_audit.log
+
+      - name: Compile committed V15.1 sources without runtime rewriting
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check test/external_revenue_v15_1_unit.js
+          node --check scripts/discover_historical_victim_v15_1.js
+          node --check test/external_revenue_v15_1_historical_polygon_fork.js
+          python -m py_compile scripts/validate_external_revenue_v15_1.py
+          bash -n scripts/start_polygon_archive_fork.sh
+          npx hardhat compile 2>&1 | tee reports/v15_1_compile.log
+
+      - name: Prove V15.1 structural accounting and pull-refund safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test test/external_revenue_v15_1_unit.js \
+            2>&1 | tee reports/v15_1_structural_test.log
+
+      - name: Discover an actual historical QuickSwap victim
+        shell: bash
+        run: |
+          set +e
+          node scripts/discover_historical_victim_v15_1.js \
+            2>&1 | tee reports/v15_1_historical_victim_discovery.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$status" == "0" ]]; then
+            echo "V151_HISTORICAL_VICTIM_FOUND=true" >> "$GITHUB_ENV"
+          elif [[ "$status" == "2" ]]; then
+            echo "V151_HISTORICAL_VICTIM_FOUND=false" >> "$GITHUB_ENV"
+          else
+            exit "$status"
+          fi
+
+      - name: Start Polygon fork immediately before the historical victim
+        if: env.V151_HISTORICAL_VICTIM_FOUND == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/start_polygon_archive_fork.sh \
+            cancun \
+            reports/v15_1_anvil.log \
+            8545
+
+      - name: Replay victim and execute the V15.1 backrun
+        if: env.V151_HISTORICAL_VICTIM_FOUND == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test \
+            test/external_revenue_v15_1_historical_polygon_fork.js \
+            --network polygonFork \
+            2>&1 | tee reports/v15_1_historical_polygon_fork.log
+
+      - name: Validate strict V15.1 evidence classification
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_external_revenue_v15_1.py \
+            2>&1 | tee reports/v15_1_validator.log
+
+      - name: Upload complete V15.1 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v15-1-strict-historical-external-revenue
+          path: reports/v15_1_*
+          if-no-files-found: error
+          compression-level: 6

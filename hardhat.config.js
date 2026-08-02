@@ -24,17 +24,17 @@ module.exports = {
     settings: {
       optimizer: { enabled: true, runs: 500 },
       viaIR: true,
-      evmVersion: "paris"
+      evmVersion: "cancun"
     }
   },
   networks: {
     hardhat: {
       chainId: 31337,
-      hardfork: "shanghai",
+      hardfork: "cancun",
       chains: {
         137: {
           hardforkHistory: {
-            shanghai: 0
+            cancun: 0
           }
         }
       },

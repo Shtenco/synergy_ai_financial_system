@@ -1,0 +1,73 @@
+name: SYNERGY V15.2 Econometric Supermodel
+
+on:
+  pull_request:
+    branches: [audit/synergy-qe-polygon-fork]
+    paths:
+      - "economics/synergy_v1_v15_evidence_ledger.json"
+      - "simulation/synergy_econometric_supermodel_v15_2.py"
+      - "scripts/validate_synergy_econometric_supermodel_v15_2.py"
+      - "docs/V15_2_ECONOMIST_SUPPORTER_SYNTHESIS_V1_V15.md"
+      - "package.json"
+      - ".github/workflows/synergy-econometric-v15-2.yml"
+  workflow_dispatch:
+    inputs:
+      paths:
+        description: "Monte Carlo paths"
+        required: false
+        default: "2000"
+        type: string
+
+concurrency:
+  group: synergy-v15-2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  econometric-supermodel:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      SYNERGY_V152_PATHS: ${{ inputs.paths || '2000' }}
+      SYNERGY_V152_SEED: "152"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate committed sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            simulation/synergy_econometric_supermodel_v15_2.py \
+            scripts/validate_synergy_econometric_supermodel_v15_2.py
+          python -m json.tool \
+            economics/synergy_v1_v15_evidence_ledger.json \
+            >/dev/null
+
+      - name: Run V15.2 structural-econometric model
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python simulation/synergy_econometric_supermodel_v15_2.py \
+            2>&1 | tee reports/synergy_v15_2_model.log
+
+      - name: Validate accounting and evidence classification
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_synergy_econometric_supermodel_v15_2.py \
+            2>&1 | tee reports/synergy_v15_2_validator.log
+
+      - name: Upload V15.2 economic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v15-2-econometric-supermodel-evidence
+          path: reports/synergy_v15_2_*
+          if-no-files-found: error
+          compression-level: 6

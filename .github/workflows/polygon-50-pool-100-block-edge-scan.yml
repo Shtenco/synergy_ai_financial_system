@@ -1,0 +1,86 @@
+name: SYNERGY V10 Exhaustive Polygon 50-Pool 100-Block Edge Scan
+
+on:
+  pull_request:
+    branches: [audit/synergy-qe-polygon-fork]
+    paths:
+      - "scripts/scan_polygon_50_pool_100_blocks.js"
+      - "scripts/patch_polygon_scanner_v10.py"
+      - "scripts/validate_polygon_50_pool_100_blocks.py"
+      - "scripts/plot_polygon_50_pool_100_blocks.py"
+      - ".github/workflows/polygon-50-pool-100-block-edge-scan.yml"
+  workflow_dispatch:
+    inputs:
+      end_block:
+        description: "Optional Polygon end block; empty means latest minus confirmations"
+        required: false
+        type: string
+
+jobs:
+  real-polygon-50-pool-scan:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
+      BLOCK_COUNT: "100"
+      CONFIRMATIONS: "12"
+      EXTERNAL_POOL_TARGET: "50"
+      MAX_HOPS: "4"
+      INTERNAL_SYN_RESERVE: "5000"
+      INTERNAL_USDT_RESERVE: "5000"
+      INTERNAL_FEE_BPS: "30"
+      FLASH_PREMIUM_BPS: "5"
+      MIN_NET_PROFIT_USDT: "0.25"
+      MIN_ROUTE_POOL_TVL_USD: "5000"
+      PRIORITY_FEE_GWEI: "30"
+      QUOTE_SIZES_USDT: "50,100,250,500,1000"
+      END_BLOCK: ${{ inputs.end_block }}
+      NODE_OPTIONS: "--max-old-space-size=4096"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          python -m pip install --upgrade matplotlib
+
+      - name: Apply exhaustive upper-bound scanner
+        run: |
+          python scripts/patch_polygon_scanner_v10.py
+          node --check scripts/scan_polygon_50_pool_100_blocks.js
+
+      - name: Scan 50 real DEX pools over 100 consecutive Polygon blocks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          node scripts/scan_polygon_50_pool_100_blocks.js \
+            2>&1 | tee reports/polygon_50_pool_100_block_scan.log
+
+      - name: Validate exhaustive real-price evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_polygon_50_pool_100_blocks.py \
+            2>&1 | tee reports/polygon_50_pool_100_block_validator.log
+
+      - name: Render evidence charts
+        run: python scripts/plot_polygon_50_pool_100_blocks.py
+
+      - name: Upload complete real-market evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v10-exhaustive-polygon-50-pool-100-block-evidence
+          path: reports/*
+          if-no-files-found: error

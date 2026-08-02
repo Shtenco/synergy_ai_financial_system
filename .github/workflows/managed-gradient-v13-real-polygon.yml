@@ -1,0 +1,101 @@
+name: SYNERGY V14 Strict Stateful Evidence
+
+on:
+  pull_request:
+    branches: [audit/synergy-qe-polygon-fork]
+    paths:
+      - "scripts/export_polygon_scanner_lib_v13.py"
+      - "scripts/scan_polygon_50_pool_100_blocks.js"
+      - "scripts/scan_managed_gradient_v14_stateful.js"
+      - "scripts/patch_managed_gradient_v14_wallet_funding.py"
+      - "scripts/patch_managed_gradient_v14_fast_screen.py"
+      - "scripts/patch_managed_gradient_v14_diagnostics.py"
+      - "scripts/validate_managed_gradient_v14_stateful.py"
+      - "docs/V14_STRICT_STATEFUL_CLOSED_LOOP.md"
+      - ".github/workflows/managed-gradient-v13-real-polygon.yml"
+  workflow_dispatch:
+    inputs:
+      end_block:
+        description: "Optional Polygon end block; empty means latest minus confirmations"
+        required: false
+        type: string
+
+concurrency:
+  group: synergy-v14-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  managed-gradient-v14-stateful:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    env:
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
+      BLOCK_COUNT: "100"
+      CONFIRMATIONS: "12"
+      EXTERNAL_POOL_TARGET: "50"
+      MAX_HOPS: "4"
+      INTERNAL_SYNTHETIC_RESERVE: "5000"
+      INTERNAL_LIQUID_DEPTH_USD: "5000"
+      INTERNAL_FEE_BPS: "30"
+      INITIAL_GAS_BUDGET_USDT: "1000"
+      GRADIENT_SHIFT_BPS: "1000,2000,3000,4000"
+      QE_SIZE_BPS: "50,100,200,300,400,500,700,1000"
+      MIN_ROUTE_POOL_TVL_USD: "5000"
+      MIN_REALIZED_PROFIT_USD: "0.01"
+      TOP_EXACT_CANDIDATES_PER_BLOCK: "6"
+      MAX_MARGINAL_ROUTE_PAIRS_PER_DIRECTION: "80"
+      RESTORE_BINARY_STEPS: "18"
+      RESTORE_MAX_BRACKET_STEPS: "8"
+      EXTERNAL_POOL_SINGLE_USE: "true"
+      PRIORITY_FEE_GWEI: "30"
+      END_BLOCK: ${{ inputs.end_block }}
+      NODE_OPTIONS: "--max-old-space-size=6144"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build V14 quote library and validate sources
+        run: |
+          python scripts/export_polygon_scanner_lib_v13.py
+          python scripts/patch_managed_gradient_v14_wallet_funding.py
+          python scripts/patch_managed_gradient_v14_fast_screen.py
+          python scripts/patch_managed_gradient_v14_diagnostics.py
+          node --check scripts/_polygon_scanner_lib_v13.js
+          node --check scripts/scan_managed_gradient_v14_stateful.js
+          python -m py_compile scripts/validate_managed_gradient_v14_stateful.py
+
+      - name: Run strict stateful 100-block closed loop
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          node scripts/scan_managed_gradient_v14_stateful.js \
+            2>&1 | tee reports/managed_gradient_v14_stateful.log
+
+      - name: Validate sequential state and realized NAV
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_managed_gradient_v14_stateful.py \
+            2>&1 | tee reports/managed_gradient_v14_stateful_validator.log
+
+      - name: Upload complete V14 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v14-strict-stateful-closed-loop-evidence
+          path: reports/managed_gradient_v14_stateful*
+          if-no-files-found: error
+          compression-level: 6

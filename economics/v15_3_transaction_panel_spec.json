@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "name": "SYNERGY V15.3 strict transaction-level empirical panel",
+  "chainId": 137,
+  "policy": {
+    "strictNetEdgeBps": 2.685148,
+    "reinvestmentShare": 0.8,
+    "defaultTreasuryShare": 0.65,
+    "minimumSolverNetUsdc": 0.000001,
+    "countOnlyRealizedSettlementAsset": true,
+    "fixturePrincipalCountedAsRevenue": false,
+    "refundableBondCountedAsRevenue": false,
+    "internalMintBurnCountedAsRevenue": false
+  },
+  "market": {
+    "id": "polygon_usdc_wpol_univ3_to_quickswapv2",
+    "settlementToken": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+    "settlementSymbol": "USDC",
+    "settlementDecimals": 6,
+    "intermediateToken": "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",
+    "intermediateSymbol": "WPOL",
+    "intermediateDecimals": 18,
+    "defaultStartBlock": 91250000,
+    "defaultEndBlock": 91266308,
+    "minimumVictimUsdc": 100,
+    "targetVenue": {
+      "family": "QUICKSWAP_V2",
+      "factory": "0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32",
+      "router": "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff"
+    },
+    "sourceVenue": {
+      "family": "UNISWAP_V3",
+      "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+      "router": "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+      "quoter": "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6",
+      "feeCandidates": [100, 500, 3000, 10000]
+    }
+  },
+  "estimation": {
+    "maximumRawRows": 250,
+    "minimumReplayRows": 30,
+    "minimumTrainingRows": 20,
+    "minimumHoldoutRows": 8,
+    "holdoutFraction": 0.25,
+    "volatilityLookbackBlocks": 20,
+    "probeReserveShareBps": 5,
+    "estimatedRouteGasUnits": 2500000,
+    "ridgePenalty": 1.0,
+    "bootstrapReplications": 500,
+    "oneSidedConfidenceZ": 1.6448536269514722,
+    "maximumConditionNumber": 1000000,
+    "features": [
+      "log_victim_notional_usdc",
+      "log_target_tvl_usdc",
+      "victim_amount_to_tvl_bps",
+      "victim_price_impact_bps",
+      "pre_roundtrip_gross_edge_bps",
+      "realized_volatility_bps",
+      "estimated_route_gas_bps",
+      "base_fee_gwei",
+      "priority_fee_gwei"
+    ],
+    "diagnosticOnlyFeatures": [
+      "block_boundary_displacement_bps",
+      "post_minus_pre_roundtrip_edge_bps",
+      "transaction_index_fraction"
+    ],
+    "leakageRule": "Execution coefficients may use only covariates observable or simulatable before bundle submission; block-end outcomes are diagnostic only.",
+    "target": "aggregate_net_edge_bps_after_all_costs",
+    "gate": "predicted_one_sided_95pct_lower_bound_bps >= strictNetEdgeBps"
+  },
+  "requiredReplayAccounting": [
+    "principal_usdc",
+    "gross_route_profit_usdc",
+    "operational_gas_usdc",
+    "flash_premium_usdc",
+    "bridge_cost_usdc",
+    "mev_loss_usdc",
+    "protocol_lp_damage_usdc",
+    "liability_increase_usdc",
+    "aggregate_net_profit_usdc",
+    "aggregate_net_edge_bps_after_all_costs",
+    "treasury_revenue_usdc",
+    "solver_revenue_usdc",
+    "solver_net_after_gas_usdc",
+    "reinvested_usdc"
+  ],
+  "evidenceClasses": {
+    "raw": "actual transaction and block-boundary chain observations; never revenue",
+    "replayed": "same-block fork execution with actual gas and closed settlement route",
+    "estimated": "time-split coefficients and out-of-sample lower confidence bounds",
+    "accepted": "replayed realized edge and predicted lower bound both clear 2.685148 bps"
+  }
+}

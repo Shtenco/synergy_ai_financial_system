@@ -1,0 +1,155 @@
+name: SYNERGY V8 Stateful 10x10 QE QT Graph Fork
+
+on:
+  pull_request:
+    branches: [audit/synergy-qe-polygon-fork]
+    paths:
+      - "contracts/SynergyV5Modules.sol"
+      - "contracts/fork/SynergyAtomicQeQtCycleV11.sol"
+      - "contracts/supercycle/StatefulSupercycleV8.sol"
+      - "test/stateful_supercycle_v8_10x10_polygon_fork.js"
+      - "simulation/stateful_supercycle_v8_10x10.py"
+      - "scripts/validate_stateful_supercycle_v8_10x10.py"
+      - "hardhat.config.js"
+      - "package.json"
+      - ".github/workflows/stateful-supercycle-v8.yml"
+  workflow_dispatch:
+    inputs:
+      successful_cycles:
+        description: "Required consecutive profitable stateful fork cycles"
+        required: false
+        default: "3"
+        type: string
+
+concurrency:
+  group: synergy-v8-stateful-10x10-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stateful-v8-10x10:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
+      LOCAL_FORK_URL: "http://127.0.0.1:8545"
+      FORK_BLOCK_NUMBER: "90790000"
+      SUPERCYCLE_COUNT: ${{ inputs.successful_cycles || '3' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Verify recovered graph sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f contracts/fork/SynergyAtomicQeQtCycleV11.sol
+          test -f contracts/supercycle/StatefulSupercycleV8.sol
+          test -f test/stateful_supercycle_v8_10x10_polygon_fork.js
+          test -f simulation/stateful_supercycle_v8_10x10.py
+          test -f scripts/validate_stateful_supercycle_v8_10x10.py
+          grep -q 'contract SynergyAtomicQeQtCycleV11' contracts/fork/SynergyAtomicQeQtCycleV11.sol
+          grep -q 'contract StatefulSupercycleV8' contracts/supercycle/StatefulSupercycleV8.sol
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          mkdir -p reports
+
+      - name: Normalize legacy reserved identifier before whole-repository compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          perl -0pi -e 's/\breference\b/referencePrice/g' contracts/fork/SynergyQEForkHarness.sol
+          ! grep -Eq '\buint256 reference\b' contracts/fork/SynergyQEForkHarness.sol
+
+      - name: Compile complete recovered repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check test/stateful_supercycle_v8_10x10_polygon_fork.js
+          python -m py_compile simulation/stateful_supercycle_v8_10x10.py
+          python -m py_compile scripts/validate_stateful_supercycle_v8_10x10.py
+          npx hardhat compile 2>&1 | tee reports/stateful_v8_compile.log
+
+      - name: Run deterministic 100-cycle accounting shadow
+        shell: bash
+        run: |
+          set -euo pipefail
+          python simulation/stateful_supercycle_v8_10x10.py \
+            2>&1 | tee reports/stateful_v8_shadow.log
+
+      - name: Start pinned Polygon archive fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          anvil \
+            --fork-url "$POLYGON_RPC_URL" \
+            --fork-block-number "$FORK_BLOCK_NUMBER" \
+            --chain-id 137 \
+            --hardfork cancun \
+            --host 127.0.0.1 \
+            --port 8545 \
+            > reports/stateful_v8_anvil.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -s "$LOCAL_FORK_URL" \
+              -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+              | grep -q '0x89'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat reports/stateful_v8_anvil.log
+          exit 1
+
+      - name: Execute profitable stateful internal/external graph cycles
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat test \
+            test/stateful_supercycle_v8_10x10_polygon_fork.js \
+            --network polygonFork \
+            2>&1 | tee reports/stateful_v8_polygon_fork.log
+
+      - name: Validate consolidated QE QT graph evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_stateful_supercycle_v8_10x10.py \
+            2>&1 | tee reports/stateful_v8_validator.log
+          grep -q '"verdict": "PASS"' reports/stateful_supercycle_v8_10x10_validator.json
+
+      - name: Create evidence checksums
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          find reports -maxdepth 1 -type f -name 'stateful*' -print0 \
+            | sort -z | xargs -0 sha256sum \
+            > reports/stateful_v8_sha256.txt || true
+
+      - name: Upload complete V8 graph evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synergy-v8-stateful-10x10-qe-qt-graph-fork
+          path: |
+            reports/stateful_v8_*
+            reports/stateful_supercycle_v8_10x10_*.json
+          if-no-files-found: error
+          compression-level: 6

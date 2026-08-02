@@ -1,0 +1,31 @@
+name: SYNA Signed Polygon Mainnet Broadcast
+
+on:
+  push:
+    branches:
+      - feat/bullish-cb-v2-refill-safe-deploy
+    paths:
+      - "runtime/synergy_agent/signed/syna_mainnet_signed.json"
+
+permissions:
+  contents: read
+
+jobs:
+  broadcast:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      POLYGON_RPC_URL: "https://polygon.drpc.org"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Broadcast locally signed transactions
+        run: python scripts/broadcast_signed_syna.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: syna-polygon-mainnet-deployment
+          path: reports/syna_polygon_mainnet_deployment.json
+          if-no-files-found: warn

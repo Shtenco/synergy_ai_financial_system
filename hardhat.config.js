@@ -21,7 +21,7 @@ module.exports = {
   solidity: {
     version: "0.8.26",
     settings: {
-      optimizer: { enabled: true, runs: 500 },
+      optimizer: { enabled: true, runs: 1 },
       viaIR: true,
       evmVersion: "paris",
       metadata: { bytecodeHash: "none" }

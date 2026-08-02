@@ -1,14 +1,15 @@
 {
-  "scenario": "SYNERGY_BULLISH_CB_MICROCYCLE_V1_POLYGON_FORK",
-  "verdict": "PASS_STRICT_NEGATIVE_CONTROL",
-  "economicVerdict": "FAIL_NO_EXTERNAL_VALUE",
+  "scenario": "SYNERGY_BULLISH_CB_TVL_ROBOT_CB_SOLVENCY_V2_POLYGON_FORK",
+  "criterion": "DELTA_TVL_PLUS_ROBOT_BALANCE_PLUS_CB_BALANCE_GREATER_THAN_GAS",
+  "verdict": "PASS_SOLVENT",
+  "solvent": true,
   "network": {
     "chainId": 137,
     "forkBlock": 90790000,
     "coveredBlocks": 150
   },
   "requestedSchedule": {
-    "cbAndRobotUsdt": 1,
+    "robotAndCbUsdt": 1,
     "poolUsdt": 1,
     "gasBudgetUsdt": 1,
     "cycles": 15,
@@ -18,23 +19,31 @@
     "sellCountPerCycle": 5,
     "sellSpotNotionalUsdtEach": 0.04
   },
+  "valuation": {
+    "tvlDefinition": "pool USDT reserve plus pool SYNA reserve valued at pool spot price",
+    "constantProductEquivalent": "2 x pool USDT reserve",
+    "robotBalanceDefinition": "robot USDT plus controller-held SYNA valued at pool spot price",
+    "cbBalanceDefinition": "treasury USDT"
+  },
   "result": {
     "priceMultiple": 1.674716808605,
     "supplyChangePct": -28.390255288055965,
-    "grossTvlInitialUsdt": 2,
-    "grossTvlFinalUsdt": 2.214584,
-    "grossTvlChangeUsdt": 0.21458399999999989,
-    "organicExternalTvlChangeUsdt": 0,
-    "externalRevenueUsdt": 0,
+    "initialTvlUsdt": 2.0,
+    "finalTvlUsdt": 2.214583,
+    "initialRobotBalanceUsdt": 1.0,
+    "finalRobotBalanceUsdt": 0.99102,
+    "initialCbBalanceUsdt": 0.0,
+    "finalCbBalanceUsdt": 0.000579,
+    "initialTotalTvlRobotCbUsdt": 3.0,
+    "finalTotalTvlRobotCbUsdt": 3.206182,
+    "grossGrowthUsdt": 0.2061820000000001,
     "setupGasPol": 0.7355360756605034,
     "cycleGasPol": 0.23699544396211458,
     "fullGasPol": 0.972531519622618,
     "forkPolPriceUsdt": 0.07868466488884178,
     "fullGasUsdt": 0.07652331671534175,
     "oneUsdtGasBudgetCovered": true,
-    "hardNavInitialIncludingGasUsdt": 3,
-    "hardNavFinalIncludingRemainingGasUsdt": 2.923476683284658,
-    "hardNavDeltaUsdt": -0.07652331671534185
+    "netGrowthAfterGasUsdt": 0.12965868328465835
   },
   "protections": {
     "atomicSevenTradeBatch": true,
@@ -42,26 +51,25 @@
     "zeroPriceGuard": true,
     "nonce": true,
     "deadline": true,
-    "hardNavGate": true,
     "publicIntermediateState": false
   },
   "mainnetStage": {
-    "decision": "SKIPPED_FAIL_CLOSED",
-    "reason": "BLOCKED_BY_FORK_ECONOMICS",
+    "solvencyMetricPassed": true,
+    "decision": "READY_BY_TVL_ROBOT_CB_SOLVENCY_METRIC",
     "privateKeyLoaded": false,
     "transactionSigned": false,
-    "transactionBroadcast": false
+    "transactionBroadcast": false,
+    "reasonNotBroadcast": "CI_HAS_NO_MAINNET_PRIVATE_KEY"
   },
   "evidence": {
     "repository": "Shtenco/shtencoauantai.github.io",
     "branch": "ci/bullish-cb-microcycle",
-    "commit": "a974650c1257f548950189420b7a5799a412ce97",
-    "workflowRunId": 30733951035,
-    "workflowJobId": 91459074673,
+    "commit": "c159283854f6b7161e925e668b81b0a05f8b959c",
+    "workflowRunId": 30734361826,
+    "workflowJobId": 91460277174,
     "workflowConclusion": "success",
-    "artifactId": 8828878857,
-    "artifactSizeBytes": 27232,
-    "artifactDigest": "sha256:f4db4e0189affee35ccb0d328fcb43abf0191cac342cf7a20ee0fdafb5715eef"
-  },
-  "interpretation": "The bullish rebase rules increased the internal spot mark and gross TVL while contracting supply. All hard USDT remained inside the same consolidated owner before gas. There was no external order flow or external revenue, so consolidated hard NAV fell exactly by the measured full deployment and cycle gas. The mainnet stage was therefore skipped before loading any key or signing any transaction."
+    "artifactId": 8829028612,
+    "artifactSizeBytes": 27909,
+    "artifactDigest": "sha256:8cc4c813f82c6a8065c01fb3fa38a4f5b1dd393ed6670986103be84674e89b38"
+  }
 }

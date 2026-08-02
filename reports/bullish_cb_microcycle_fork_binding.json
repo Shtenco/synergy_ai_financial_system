@@ -1,0 +1,67 @@
+{
+  "scenario": "SYNERGY_BULLISH_CB_MICROCYCLE_V1_POLYGON_FORK",
+  "verdict": "PASS_STRICT_NEGATIVE_CONTROL",
+  "economicVerdict": "FAIL_NO_EXTERNAL_VALUE",
+  "network": {
+    "chainId": 137,
+    "forkBlock": 90790000,
+    "coveredBlocks": 150
+  },
+  "requestedSchedule": {
+    "cbAndRobotUsdt": 1,
+    "poolUsdt": 1,
+    "gasBudgetUsdt": 1,
+    "cycles": 15,
+    "trades": 105,
+    "buyCountPerCycle": 2,
+    "buyUsdtEach": 0.1,
+    "sellCountPerCycle": 5,
+    "sellSpotNotionalUsdtEach": 0.04
+  },
+  "result": {
+    "priceMultiple": 1.674716808605,
+    "supplyChangePct": -28.390255288055965,
+    "grossTvlInitialUsdt": 2,
+    "grossTvlFinalUsdt": 2.214584,
+    "grossTvlChangeUsdt": 0.21458399999999989,
+    "organicExternalTvlChangeUsdt": 0,
+    "externalRevenueUsdt": 0,
+    "setupGasPol": 0.7355360756605034,
+    "cycleGasPol": 0.23699544396211458,
+    "fullGasPol": 0.972531519622618,
+    "forkPolPriceUsdt": 0.07868466488884178,
+    "fullGasUsdt": 0.07652331671534175,
+    "oneUsdtGasBudgetCovered": true,
+    "hardNavInitialIncludingGasUsdt": 3,
+    "hardNavFinalIncludingRemainingGasUsdt": 2.923476683284658,
+    "hardNavDeltaUsdt": -0.07652331671534185
+  },
+  "protections": {
+    "atomicSevenTradeBatch": true,
+    "poolControllerOnly": true,
+    "zeroPriceGuard": true,
+    "nonce": true,
+    "deadline": true,
+    "hardNavGate": true,
+    "publicIntermediateState": false
+  },
+  "mainnetStage": {
+    "decision": "SKIPPED_FAIL_CLOSED",
+    "reason": "BLOCKED_BY_FORK_ECONOMICS",
+    "privateKeyLoaded": false,
+    "transactionSigned": false,
+    "transactionBroadcast": false
+  },
+  "evidence": {
+    "repository": "Shtenco/shtencoauantai.github.io",
+    "branch": "ci/bullish-cb-microcycle",
+    "commit": "a974650c1257f548950189420b7a5799a412ce97",
+    "workflowRunId": 30733951035,
+    "workflowJobId": 91459074673,
+    "workflowConclusion": "success",
+    "artifactId": 8828878857,
+    "artifactSizeBytes": 27232,
+    "artifactDigest": "sha256:f4db4e0189affee35ccb0d328fcb43abf0191cac342cf7a20ee0fdafb5715eef"
+  },
+  "interpretation": "The bullish rebase rules increased the internal spot mark and gross TVL while contracting supply. All hard USDT remained inside the same consolidated owner before gas. There was no external order flow or external revenue, so consolidated hard NAV fell exactly by the measured full deployment and cycle gas. The mainnet stage was therefore skipped before loading any key or signing any transaction."
+}

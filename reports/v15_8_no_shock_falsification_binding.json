@@ -1,0 +1,51 @@
+{
+  "scenario": "v15_8_no_shock_real_aave_50_pool_falsification",
+  "verdict": "FAIL_NOT_PROVEN",
+  "retraction": {
+    "v15_7NaturalProfitClaimValid": false,
+    "reason": "V15.7 created the profitable discrepancy with a separate pre-cycle reserve-changing swap. It proves callback mechanics under an engineered external gradient, not a naturally available profitable cycle."
+  },
+  "noShockRunAt90790000": {
+    "workflowRunId": 30725515682,
+    "workflowJobId": 91436338077,
+    "forkBlock": 90790000,
+    "artificialShock": false,
+    "realPoolsDiscovered": 93,
+    "externalPoolsSelected": 50,
+    "principalCandidatesWpol": [1, 2, 5, 10, 25, 50, 100, 200],
+    "bestPrincipalWpol": 5,
+    "bestExactRouteOutputWpol": 5.011015919308465595,
+    "bestExactEdgeAfterAavePremiumWpol": 0.008515919308465595,
+    "requiredGasFloorWpol": 0.35,
+    "profitableAfterGas": false,
+    "aaveFlashExecuted": false,
+    "failure": "Fail-closed preflight rejected the route before borrowing because the exact external edge did not cover the gas floor."
+  },
+  "historicalSearch": {
+    "workflowRunId": 30725787313,
+    "workflowJobId": 91437114301,
+    "scanStartBlock": 89290000,
+    "scanEndBlock": 90790000,
+    "artificialShock": false,
+    "selectedExternalPools": 50,
+    "approximateBestBlock": 89290000,
+    "approximateBestEdgeAfterPremiumWpol": 51.740651103727394,
+    "approximationAcceptedAsProof": false,
+    "exactVerification": {
+      "bestPrincipalWpol": 1,
+      "bestExactRouteOutputWpol": 1.000431171678283735,
+      "bestExactEdgeAfterAavePremiumWpol": -0.000068828321716265,
+      "profitableBeforeGas": false,
+      "profitableAfterGas": false
+    },
+    "failure": "The spot-based historical scanner produced a false positive because concentrated-liquidity price impact was not represented. Exact QuickSwap router/quoter calls rejected the candidate."
+  },
+  "claims": {
+    "arbitrarySelectedPathExecutorCompiles": true,
+    "fiftyPoolManifestBuilds": true,
+    "arbitraryProfitablePathExecutedWithoutShock": false,
+    "realAavePrincipalExecutedInProfitableNoShockCycle": false,
+    "mainnetProfitabilityProven": false
+  },
+  "strictConclusion": "The two requested claims remain unproven. No result may be marked PASS until an unmodified chain state produces exact route proceeds greater than Aave principal, actual premium, exact QE buyback and measured gas, followed by a successful atomic Aave callback and repayment."
+}

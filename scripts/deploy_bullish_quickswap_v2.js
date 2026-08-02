@@ -24,6 +24,24 @@ async function requireCode(provider, label, address) {
   if (code === "0x") throw new Error(`${label} has no code: ${address}`);
 }
 
+function requirePositiveForkGate() {
+  const reportPath = path.resolve(
+    process.cwd(),
+    process.env.MAINNET_GATE_REPORT || "reports/bullish_quickswap_mainnet_stop_first10.json"
+  );
+  if (!fs.existsSync(reportPath)) throw new Error("Mainnet gate report is missing");
+  const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+  if (
+    report.decision !== "ALLOW_MAINNET_DEPLOYMENT" ||
+    Number(report.netGrowthAfterGasUsdt) <= 0 ||
+    report.privateKeyLoaded !== false ||
+    report.transactionBroadcast !== false
+  ) {
+    throw new Error("Mainnet blocked: first-ten fork growth did not exceed full gas");
+  }
+  return report;
+}
+
 async function main() {
   const network = await ethers.provider.getNetwork();
   if (Number(network.chainId) !== 137) throw new Error(`Expected Polygon chainId 137, got ${network.chainId}`);
@@ -33,8 +51,11 @@ async function main() {
   if (required("KEY_ROTATED_ACK") !== ROTATED_ACK) {
     throw new Error("Refusing deployment: create a new private key that has never been shared, then set KEY_ROTATED_ACK");
   }
-  if (executionMode === "execute" && required("MAINNET_ARM_PHRASE") !== ARM_PHRASE) {
-    throw new Error("Mainnet arm phrase is absent or incorrect");
+  if (executionMode === "execute") {
+    if (required("MAINNET_ARM_PHRASE") !== ARM_PHRASE) {
+      throw new Error("Mainnet arm phrase is absent or incorrect");
+    }
+    requirePositiveForkGate();
   }
 
   const [signer] = await ethers.getSigners();
@@ -79,6 +100,8 @@ async function main() {
     deployerPol: ethers.formatEther(nativeBalance),
     deployerUsdt: ethers.formatUnits(usdtBalance, 6),
     executionMode,
+    tokenImplementation: "RebaseSynaExactV3",
+    controllerImplementation: "BullishQuickSwapCentralBankV2",
     privateKeyPrinted: false,
   };
   console.log(JSON.stringify(preflight, null, 2));
@@ -91,7 +114,7 @@ async function main() {
   const totalSupply = ethers.parseEther(process.env.INIT_TOTAL_SUPPLY || "1000000");
   const poolToken = ethers.parseEther(process.env.INIT_POOL_SYNA || "500000");
 
-  const Token = await ethers.getContractFactory("RebaseSynaV2", signer);
+  const Token = await ethers.getContractFactory("RebaseSynaExactV3", signer);
   const token = await Token.deploy(signerAddress);
   await token.waitForDeployment();
   await token.deploymentTransaction().wait(confirmations);
@@ -134,7 +157,7 @@ async function main() {
   };
   const outDir = path.join(process.cwd(), "deployments");
   fs.mkdirSync(outDir, { recursive: true });
-  const out = path.join(outDir, "bullish_qs_v2_polygon.json");
+  const out = path.join(outDir, "bullish_qs_v3_polygon.json");
   fs.writeFileSync(out, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 }

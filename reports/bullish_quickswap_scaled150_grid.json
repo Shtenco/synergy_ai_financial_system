@@ -1,0 +1,83 @@
+{
+  "scenario": "BULLISH_QUICKSWAP_DEAL_SCALE_SELECTION",
+  "network": {
+    "chainId": 137,
+    "forkBlock": 90790000
+  },
+  "capitalUnchanged": {
+    "poolUsdt": 1.0,
+    "robotUsdt": 1.0,
+    "initialMetricUsdt": 3.0
+  },
+  "selected": {
+    "dealScaleBps": 15000,
+    "dealScaleMultiple": 1.5,
+    "buyUsdt": 0.15,
+    "sellNotionalUsdt": 0.06,
+    "buysPerCycle": 2,
+    "sellsPerCycle": 5,
+    "cycles": 10,
+    "trades": 70,
+    "finalMetricUsdt": 3.276015,
+    "grossGrowthUsdt": 0.276015,
+    "setupGasPol": 1.3859162094938748,
+    "runtimeGasPol": 0.3141396643269269,
+    "fullGasPol": 1.7000558738208018,
+    "fullGasUsdt": 0.13376832672389688,
+    "netGrowthAfterGasUsdt": 0.14224667327610313,
+    "gasCoverageMultiple": 2.063380822350465,
+    "priceMultiple": 1.5753192443985,
+    "verdict": "PASS_POSITIVE_FIRST_10"
+  },
+  "comparison": {
+    "scale10000": {
+      "buyUsdt": 0.1,
+      "sellNotionalUsdt": 0.04,
+      "grossGrowthUsdt": 0.126713,
+      "fullGasUsdt": 0.1264726336744893,
+      "netGrowthAfterGasUsdt": 0.0002403663255106936,
+      "gasCoverageMultiple": 1.0019005402080052
+    },
+    "scale11500": {
+      "buyUsdt": 0.115,
+      "sellNotionalUsdt": 0.046,
+      "grossGrowthUsdt": 0.166208,
+      "fullGasUsdt": 0.13802681340592593,
+      "netGrowthAfterGasUsdt": 0.028181186594074065,
+      "gasCoverageMultiple": 1.2041718264638583
+    },
+    "scale17500": {
+      "buyUsdt": 0.175,
+      "sellNotionalUsdt": 0.07,
+      "grossGrowthUsdt": 0.368744,
+      "fullGasUsdt": 0.15577939760557982,
+      "netGrowthAfterGasUsdt": 0.2129646023944202,
+      "gasCoverageMultiple": 2.3670909354369725
+    },
+    "scale20000": {
+      "buyUsdt": 0.2,
+      "sellNotionalUsdt": 0.08,
+      "grossGrowthUsdt": 0.474369,
+      "fullGasUsdt": 0.17806686882962153,
+      "netGrowthAfterGasUsdt": 0.29630213117037846,
+      "gasCoverageMultiple": 2.6639936059856657
+    }
+  },
+  "selectionRule": "Use the smallest tested scale with at least 1.25x gas coverage and at least 0.025 USDT net after complete setup and runtime gas.",
+  "evidence": {
+    "repository": "Shtenco/shtencoauantai.github.io",
+    "branch": "ci/bullish-cb-microcycle",
+    "commit": "7f069d0e560d3c02f27938f10c664f7df476fb28",
+    "workflowRunId": 30737502634,
+    "workflowJobId": 91468876638,
+    "artifactId": 8830140417,
+    "artifactSha256": "443c91cf1a5dd269cd4441b1075991a71df8bd3385c02ea7e4e0fcb7d7dbe9d9"
+  },
+  "security": {
+    "mainnetAuthorized": false,
+    "privateKeyLoaded": false,
+    "transactionSigned": false,
+    "transactionBroadcast": false
+  },
+  "caveat": "This is a pinned-fork mark-to-market accounting result, not proof of externally realized profit or a guarantee for mainnet."
+}

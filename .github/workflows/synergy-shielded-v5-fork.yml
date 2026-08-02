@@ -1,0 +1,63 @@
+name: Synergy Shielded V5 Polygon Fork
+
+on:
+  pull_request:
+    paths:
+      - "contracts/microcycle/RebaseSynaExactV3.sol"
+      - "contracts/microcycle/BullishQuickSwapShieldedV5.sol"
+      - "contracts/microcycle/SynergyQuickSwapBootstrapV5.sol"
+      - "test/synergy_shielded_v5_polygon_fork.js"
+      - "scripts/deploy_synergy_shielded_v5.js"
+      - "hardhat.config.js"
+      - ".github/workflows/synergy-shielded-v5-fork.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-security-economics:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    env:
+      FORK_SOURCE_URL: https://polygon.drpc.org
+      POLYGON_RPC_URL: http://127.0.0.1:8545
+      FORK_BLOCK_NUMBER: "90790000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Syntax check deployer
+        run: node --check scripts/deploy_synergy_shielded_v5.js
+      - name: Compile shielded contracts
+        run: npx hardhat compile --force
+      - name: Start pinned Polygon fork
+        run: |
+          set -euo pipefail
+          anvil \
+            --fork-url "$FORK_SOURCE_URL" \
+            --fork-block-number "$FORK_BLOCK_NUMBER" \
+            --chain-id 137 \
+            --hardfork cancun \
+            --host 127.0.0.1 \
+            --port 8545 \
+            > /tmp/synergy-v5-anvil.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -s "$POLYGON_RPC_URL" \
+              -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+              | grep -q '0x89'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/synergy-v5-anvil.log
+          exit 1
+      - name: Execute security and economics fork suite
+        run: npx hardhat test test/synergy_shielded_v5_polygon_fork.js --network polygon

@@ -1,43 +1,50 @@
 {
-  "scenario": "BULLISH_QUICKSWAP_FIRST10_MAINNET_GATE",
-  "criterion": "DELTA_TVL_PLUS_ROBOT_PLUS_CB_MINUS_FULL_SETUP_AND_CYCLE_GAS_GREATER_THAN_ZERO",
+  "scenario": "BULLISH_QUICKSWAP_SCALED175_MAINNET_GATE",
+  "criterion": "DELTA_TVL_PLUS_ROBOT_PLUS_CB_MINUS_FULL_SETUP_AND_RUNTIME_GAS_POSITIVE_WITH_1_5X_GAS_COVERAGE_AND_REFILL_REGRESSION",
+  "forkGate": "PASS",
   "decision": "STOP_MAINNET_DEPLOYMENT",
-  "reason": "FIRST_10_NET_NON_POSITIVE_ON_PINNED_POLYGON_FORK",
+  "reason": "FORK_GATES_PASSED_BUT_NO_FRESH_UNSHARED_KEY_OR_EXPLICIT_NEW_EXECUTION",
   "network": {
     "chainId": 137,
     "forkBlock": 90790000
   },
-  "testedImplementations": {
-    "routerV3": {
-      "token": "RebaseSynaExactV3",
-      "controller": "BullishQuickSwapCentralBankV2",
-      "cycles": 10,
-      "trades": 70,
-      "initialMetricUsdt": 3.0,
-      "finalMetricUsdt": 3.126713,
-      "grossGrowthUsdt": 0.126713,
-      "fullGasPol": 1.7691847359,
-      "fullGasUsdt": 0.1391984693,
-      "netGrowthAfterGasUsdt": -0.0124854693,
-      "priceMultiple": 1.388132403245,
-      "verdict": "STOP_FIRST_10_NON_POSITIVE"
-    },
-    "directPairV4": {
-      "token": "RebaseSynaExactV3",
-      "controller": "BullishQuickSwapDirectV4",
-      "cycles": 10,
-      "trades": 70,
-      "initialMetricUsdt": 3.0,
-      "finalMetricUsdt": 3.126713,
-      "grossGrowthUsdt": 0.126713,
-      "setupGasPol": 1.490186271730837,
-      "cycleGasPol": 0.306271958012188,
-      "fullGasPol": 1.796458229743025,
-      "fullGasUsdt": 0.14135371379413186,
-      "netGrowthAfterGasUsdt": -0.014640713794131871,
-      "priceMultiple": 1.388675070382,
-      "verdict": "STOP_FIRST_10_NON_POSITIVE"
-    }
+  "selectedImplementation": {
+    "token": "RebaseSynaExactV3",
+    "controller": "BullishQuickSwapScaled175",
+    "dealScaleBps": 17500,
+    "buyCountPerCycle": 2,
+    "buyUsdt": 0.175,
+    "sellCountPerCycle": 5,
+    "sellNotionalUsdt": 0.07,
+    "initialPoolUsdt": 1.0,
+    "initialRobotUsdt": 1.0,
+    "cycles": 10,
+    "trades": 70
+  },
+  "firstTen": {
+    "initialMetricUsdt": 3.0,
+    "finalMetricUsdt": 3.368744,
+    "grossGrowthUsdt": 0.368744,
+    "setupGasPol": 1.8370711443605836,
+    "runtimeGasPol": 0.4423472762695998,
+    "fullGasPol": 2.2794184206301833,
+    "fullGasUsdt": 0.17935527456873895,
+    "netGrowthAfterGasUsdt": 0.18938872543126106,
+    "gasCoverageMultiple": 2.0559417663441883,
+    "netAt150PctGasUsdt": 0.09971108814689161,
+    "priceMultiple": 1.6862750025,
+    "verdict": "PASS_ROBUST_POSITIVE_FIRST_10"
+  },
+  "refills": {
+    "refillRegressionPassed": true,
+    "robotRefillEvents": 1,
+    "robotUsdtBefore": 1.0,
+    "robotUsdtAfter": 1.0404,
+    "gasRefillEvents": 1,
+    "treasuryBeforeGasRefillUsdt": 0.001511,
+    "gasRefillPol": 0.001,
+    "gasRefillSpentUsdt": 0.000079,
+    "verdict": "PASS_BOUNDED_ROBOT_AND_EXACT_POL_REFILL"
   },
   "security": {
     "uploadedKeyUsed": false,
@@ -51,11 +58,16 @@
   "evidence": {
     "publicCiRepository": "Shtenco/shtencoauantai.github.io",
     "branch": "ci/bullish-cb-microcycle",
-    "directPairCommit": "6173328202005af7c6cc6d2fe4d21629103dbb8a",
-    "directPairWorkflowRunId": 30736337656,
-    "directPairWorkflowJobId": 91465686914,
+    "firstTenCommit": "8b2e35b0c844e55cd11ea95c06d6aa12d2ed042a",
+    "firstTenWorkflowRunId": 30738246322,
+    "firstTenWorkflowJobId": 91470843198,
+    "firstTenArtifactId": 8830369430,
+    "refillCommit": "26d137492de9e2d5b2d734b331f6051cba4f1c40",
+    "refillWorkflowRunId": 30738543881,
+    "refillWorkflowJobId": 91471666283,
+    "refillArtifactId": 8830481989,
     "compilePassed": true,
-    "forkStarted": true,
-    "stopCriterionTriggered": true
+    "firstTenPassed": true,
+    "refillRegressionPassed": true
   }
 }

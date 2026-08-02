@@ -1,0 +1,70 @@
+{
+  "scenario": "v15_7_real_aave_50_pool_dynamic_qe_qt",
+  "verdict": "PASS",
+  "validationMode": "FAIL_CLOSED_REAL_AAVE_50_POOL_QE_QT",
+  "polygonFork": {
+    "chainId": 137,
+    "blockNumber": 90790000,
+    "realPoolsDiscovered": 93,
+    "externalPoolsSelected": 50,
+    "graphCyclesEnumerated": 816,
+    "selectedRouteHops": 2,
+    "selectedRoute": [
+      {
+        "venue": "QuickSwapV2",
+        "pool": "0x604229c960e5CACF2aaEAc8Be68Ac07BA9dF81c3",
+        "tokenIn": "WPOL",
+        "tokenOut": "USDT"
+      },
+      {
+        "venue": "QuickSwapV3",
+        "pool": "0x5b41EEDCfC8e0AE47493d4945Aa1AE4fe05430ff",
+        "tokenIn": "USDT",
+        "tokenOut": "WPOL"
+      }
+    ]
+  },
+  "realAaveFlash": {
+    "pool": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+    "asset": "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",
+    "principalWpol": 100,
+    "actualPremiumWpol": 0.05,
+    "receiverPreFundedWpol": 0,
+    "fullPrincipalRouted": true,
+    "principalAndPremiumRepaid": true
+  },
+  "qeQt": {
+    "qeMintSyn": 1,
+    "internalWpolExtracted": 0.0996801237833176,
+    "exactBuybackWpol": 0.10028090669532932,
+    "temporarySupplyClosed": true,
+    "syntheticSupplyRestored": true,
+    "internalKNonDecreasing": true
+  },
+  "economics": {
+    "independentExternalShockUsdt": 23914.865147,
+    "routeOutputWpol": 217.18942956618068,
+    "realizedProfitBeforeMeasuredGasWpol": 117.13882878326865,
+    "measuredGasPolAt274Gwei": 0.271721416,
+    "netAfterMeasuredGasWpol": 116.86710736726866
+  },
+  "evidence": {
+    "publicEvidenceRepository": "Shtenco/shtencoauantai.github.io",
+    "publicEvidenceBranch": "ci/v15-7-aave-50-pool",
+    "publicEvidenceCommit": "f1694f292bfda5259b123b40cc7ca44df30f00b2",
+    "workflowRunId": 30724948782,
+    "workflowJobId": 91434757907,
+    "workflowConclusion": "success",
+    "artifactId": 8826008956,
+    "artifactSizeBytes": 28713,
+    "artifactDigest": "sha256:1a9773deb9b7f3561c0f218f6e9bd6b9795ec1bdcad518fbe49320da5b2f4f59",
+    "artifactFileCount": 25,
+    "internalChecksumEntries": 24,
+    "internalChecksumFailures": 0
+  },
+  "scopeBoundary": {
+    "proved": "A route selected from a validated 50-pool Polygon graph can atomically use a real Aave V3 100 WPOL flash loan, execute the external route, close internal QE/QT, repay actual premium and retain positive realized profit after measured gas.",
+    "notProved": "This fork result does not assert that the same edge exists naturally at the current mainnet head or remains available against MEV and competition.",
+    "edgeOrigin": "The profitable discrepancy was created by an independent pre-cycle USDT-to-WPOL swap equal to 50 percent of the target QuickSwap V2 pool's historical USDT reserve. The shock was a separate transaction and was not counted as protocol revenue."
+  }
+}

@@ -29,7 +29,7 @@ async function main() {
   if (Number(network.chainId) !== 137) throw new Error(`Expected Polygon chainId 137, got ${network.chainId}`);
 
   const executionMode = required("EXECUTION_MODE");
-  if (!['dry-run', 'execute'].includes(executionMode)) throw new Error("EXECUTION_MODE must be dry-run or execute");
+  if (!["dry-run", "execute"].includes(executionMode)) throw new Error("EXECUTION_MODE must be dry-run or execute");
   if (required("KEY_ROTATED_ACK") !== ROTATED_ACK) {
     throw new Error("Refusing deployment: create a new private key that has never been shared, then set KEY_ROTATED_ACK");
   }
@@ -74,10 +74,10 @@ async function main() {
     signer: signerAddress,
     router: routerAddress,
     factory: factoryAddress,
-    usdt: usdtAddress,
+    usdtAddress,
     wpol: wpolAddress,
-    nativePol: ethers.formatEther(nativeBalance),
-    usdt: ethers.formatUnits(usdtBalance, 6),
+    deployerPol: ethers.formatEther(nativeBalance),
+    deployerUsdt: ethers.formatUnits(usdtBalance, 6),
     executionMode,
     privateKeyPrinted: false,
   };
@@ -94,7 +94,7 @@ async function main() {
   const Token = await ethers.getContractFactory("RebaseSynaV2", signer);
   const token = await Token.deploy(signerAddress);
   await token.waitForDeployment();
-  await (await token.deploymentTransaction().wait(confirmations));
+  await token.deploymentTransaction().wait(confirmations);
 
   const Controller = await ethers.getContractFactory("BullishQuickSwapCentralBankV2", signer);
   const controller = await Controller.deploy(
@@ -105,7 +105,7 @@ async function main() {
     await token.getAddress()
   );
   await controller.waitForDeployment();
-  await (await controller.deploymentTransaction().wait(confirmations));
+  await controller.deploymentTransaction().wait(confirmations);
 
   await (await token.setController(await controller.getAddress())).wait(confirmations);
   const usdtWrite = new ethers.Contract(

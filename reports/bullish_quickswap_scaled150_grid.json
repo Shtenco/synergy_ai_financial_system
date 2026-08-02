@@ -1,5 +1,6 @@
 {
-  "scenario": "BULLISH_QUICKSWAP_DEAL_SCALE_SELECTION",
+  "scenario": "BULLISH_QUICKSWAP_DEAL_SCALE_GRID",
+  "status": "SUPERSEDED_BY_EXACT_DEPLOYED_CONTRACT_TEST",
   "network": {
     "chainId": 137,
     "forkBlock": 90790000
@@ -9,62 +10,31 @@
     "robotUsdt": 1.0,
     "initialMetricUsdt": 3.0
   },
-  "selected": {
+  "temporaryGridSelection": {
     "dealScaleBps": 15000,
-    "dealScaleMultiple": 1.5,
     "buyUsdt": 0.15,
     "sellNotionalUsdt": 0.06,
-    "buysPerCycle": 2,
-    "sellsPerCycle": 5,
-    "cycles": 10,
-    "trades": 70,
-    "finalMetricUsdt": 3.276015,
+    "gridNetGrowthAfterGasUsdt": 0.14224667327610313,
+    "gridGasCoverageMultiple": 2.063380822350465,
+    "status": "REJECTED_AFTER_EXACT_CHILD_CONTRACT_GAS_MEASUREMENT"
+  },
+  "exactScaled150Measurement": {
     "grossGrowthUsdt": 0.276015,
-    "setupGasPol": 1.3859162094938748,
-    "runtimeGasPol": 0.3141396643269269,
-    "fullGasPol": 1.7000558738208018,
-    "fullGasUsdt": 0.13376832672389688,
-    "netGrowthAfterGasUsdt": 0.14224667327610313,
-    "gasCoverageMultiple": 2.063380822350465,
-    "priceMultiple": 1.5753192443985,
-    "verdict": "PASS_POSITIVE_FIRST_10"
+    "fullGasUsdt": 0.18885462699388014,
+    "netGrowthAfterGasUsdt": 0.08716037300611987,
+    "gasCoverageMultiple": 1.4615209825330058,
+    "netAt150PctGasUsdt": -0.007266940490820217,
+    "verdict": "STOP_NON_ROBUST"
   },
-  "comparison": {
-    "scale10000": {
-      "buyUsdt": 0.1,
-      "sellNotionalUsdt": 0.04,
-      "grossGrowthUsdt": 0.126713,
-      "fullGasUsdt": 0.1264726336744893,
-      "netGrowthAfterGasUsdt": 0.0002403663255106936,
-      "gasCoverageMultiple": 1.0019005402080052
-    },
-    "scale11500": {
-      "buyUsdt": 0.115,
-      "sellNotionalUsdt": 0.046,
-      "grossGrowthUsdt": 0.166208,
-      "fullGasUsdt": 0.13802681340592593,
-      "netGrowthAfterGasUsdt": 0.028181186594074065,
-      "gasCoverageMultiple": 1.2041718264638583
-    },
-    "scale17500": {
-      "buyUsdt": 0.175,
-      "sellNotionalUsdt": 0.07,
-      "grossGrowthUsdt": 0.368744,
-      "fullGasUsdt": 0.15577939760557982,
-      "netGrowthAfterGasUsdt": 0.2129646023944202,
-      "gasCoverageMultiple": 2.3670909354369725
-    },
-    "scale20000": {
-      "buyUsdt": 0.2,
-      "sellNotionalUsdt": 0.08,
-      "grossGrowthUsdt": 0.474369,
-      "fullGasUsdt": 0.17806686882962153,
-      "netGrowthAfterGasUsdt": 0.29630213117037846,
-      "gasCoverageMultiple": 2.6639936059856657
-    }
+  "finalSelection": {
+    "report": "reports/bullish_quickswap_scaled175_first10.json",
+    "controller": "BullishQuickSwapScaled175",
+    "dealScaleBps": 17500,
+    "buyUsdt": 0.175,
+    "sellNotionalUsdt": 0.07,
+    "reason": "The exact deployed Scaled175 controller passed full gas accounting, at least 1.5x gas coverage, and a +50% gas stress."
   },
-  "selectionRule": "Use the smallest tested scale with at least 1.25x gas coverage and at least 0.025 USDT net after complete setup and runtime gas.",
-  "evidence": {
+  "gridEvidence": {
     "repository": "Shtenco/shtencoauantai.github.io",
     "branch": "ci/bullish-cb-microcycle",
     "commit": "7f069d0e560d3c02f27938f10c664f7df476fb28",
@@ -79,5 +49,5 @@
     "transactionSigned": false,
     "transactionBroadcast": false
   },
-  "caveat": "This is a pinned-fork mark-to-market accounting result, not proof of externally realized profit or a guarantee for mainnet."
+  "caveat": "Grid runs used pinned-fork mark-to-market accounting. The exact child-contract deployment gas is authoritative for final selection."
 }

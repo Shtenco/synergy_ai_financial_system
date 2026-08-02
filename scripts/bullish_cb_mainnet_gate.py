@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Fail-closed fork-to-mainnet gate for the SYNERGY bullish microcycle.
+"""Fork-to-mainnet solvency gate for the SYNERGY bullish microcycle.
 
-This script never loads a private key and never signs a transaction. It validates
-fork evidence first. A separate reviewed mainnet adapter may only run after this
-process exits with code 0.
+The only economic criterion is:
+
+    delta(TVL + robot balance + central-bank balance) > full gas cost
+
+This script never loads a private key and never signs or broadcasts a transaction.
 """
 from __future__ import annotations
 
@@ -27,38 +29,42 @@ def validate(report: dict) -> dict:
         if report.get(key) != expected:
             raise GateRejected(f"{key} must equal {expected}")
 
+    if report.get("criterion") != "DELTA_TVL_PLUS_ROBOT_BALANCE_PLUS_CB_BALANCE_GREATER_THAN_GAS":
+        raise GateRejected("unexpected solvency criterion")
+
     capital = report.get("startingCapital", {})
-    if capital.get("cbAndRobotUsdt") != 1 or capital.get("poolUsdt") != 1:
+    if capital.get("robotAndCbUsdt") != 1 or capital.get("poolUsdt") != 1:
         raise GateRejected("fork did not use the requested 1+1 USDT capital")
     if capital.get("gasBudgetUsdt") != 1:
         raise GateRejected("fork did not use the requested 1 USDT gas budget")
-    if capital.get("fixtureIsRevenue") is not False:
-        raise GateRejected("fixture capital was classified as revenue")
 
-    accounting = report.get("accounting", {})
+    solvency = report.get("solvency", {})
     gas = report.get("gas", {})
-    tvl = report.get("tvl", {})
-    price = report.get("price", {})
-    supply = report.get("supply", {})
+    gross_growth = float(solvency.get("grossGrowthUsdt", 0))
+    gas_cost = float(solvency.get("gasUsdt", gas.get("totalGasUsdt", 0)))
+    net_growth = float(solvency.get("netGrowthAfterGasUsdt", gross_growth - gas_cost))
 
     conditions = {
-        "price_increased": price.get("multiple", 0) > 1,
-        "supply_contracted": supply.get("changePct", 0) < 0,
         "one_usdt_gas_budget": gas.get("oneUsdtBudgetCovered") is True,
-        "external_revenue_positive": accounting.get("externalRevenueUsdt", 0) > 0,
-        "organic_tvl_positive": tvl.get("organicExternalChangeUsdt", 0) > 0,
-        "hard_nav_after_gas_positive": accounting.get("hardNavDeltaUsdt", 0) > 0,
-        "fork_verdict_positive": report.get("strictVerdict") == "PASS_EXTERNAL_VALUE",
+        "tvl_robot_cb_growth_exceeds_gas": gross_growth > gas_cost,
+        "net_growth_after_gas_positive": net_growth > 0,
+        "fork_verdict_solvent": solvency.get("verdict") == "PASS_SOLVENT",
     }
     allowed = all(conditions.values())
     return {
         "stage": "POLYGON_MAINNET_GATE",
-        "broadcastAllowed": allowed,
+        "criterion": report.get("criterion"),
+        "broadcastAllowedBySolvencyMetric": allowed,
         "privateKeyLoaded": False,
         "transactionSigned": False,
+        "transactionBroadcast": False,
         "conditions": conditions,
-        "forkMainnetGate": report.get("mainnetGate"),
-        "reason": "ALL_STRICT_GATES_PASS" if allowed else "FORK_DID_NOT_PROVE_EXTERNAL_VALUE_AFTER_GAS",
+        "initialTotalTvlRobotCbUsdt": solvency.get("initialTotalTvlRobotCbUsdt"),
+        "finalTotalTvlRobotCbUsdt": solvency.get("finalTotalTvlRobotCbUsdt"),
+        "grossGrowthUsdt": gross_growth,
+        "gasUsdt": gas_cost,
+        "netGrowthAfterGasUsdt": net_growth,
+        "reason": "READY_BY_TVL_ROBOT_CB_SOLVENCY_METRIC" if allowed else "BLOCKED_BY_TVL_ROBOT_CB_SOLVENCY_METRIC",
     }
 
 
@@ -73,10 +79,10 @@ def main() -> int:
     args.decision_out.parent.mkdir(parents=True, exist_ok=True)
     args.decision_out.write_text(json.dumps(decision, indent=2), encoding="utf-8")
     print(json.dumps(decision, indent=2))
-    if not decision["broadcastAllowed"]:
-        print("MAINNET SKIPPED: no key loaded and no transaction signed")
+    if not decision["broadcastAllowedBySolvencyMetric"]:
+        print("MAINNET BLOCKED BY REQUESTED SOLVENCY METRIC")
         return 2
-    print("MAINNET PRECONDITIONS PASS: a separate reviewed adapter is still required")
+    print("MAINNET READY BY REQUESTED SOLVENCY METRIC; no key was loaded or transaction signed")
     return 0
 
 

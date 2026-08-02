@@ -1,0 +1,45 @@
+name: SYNERGY RL security gate
+
+on:
+  pull_request:
+    paths:
+      - "ai_centrobank/**"
+      - "runtime/synergy_agent/**"
+      - "scripts/synergy_*.py"
+      - "scripts/check_no_synergy_secrets.py"
+      - "tests/test_synergy_runtime_guard.py"
+      - "requirements-synergy-agent.txt"
+      - ".github/workflows/synergy-rl-security.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  security-and-runtime-guards:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install lightweight security dependencies
+        run: pip install "eth-account>=0.13,<0.14" "python-dotenv>=1.0,<2"
+      - name: Refuse tracked wallet secrets
+        run: python scripts/check_no_synergy_secrets.py
+      - name: Compile safety code
+        run: |
+          python -m py_compile \
+            ai_centrobank/synergy_runtime_guard.py \
+            scripts/synergy_secure_vault.py \
+            scripts/synergy_agent_preflight.py \
+            scripts/run_synergy_agent_guarded.py
+      - name: Run hard-limit tests
+        run: python -m unittest tests.test_synergy_runtime_guard -v
+      - name: Verify runtime vault remains ignored
+        run: |
+          test -f runtime/synergy_agent/.gitignore
+          test -f runtime/synergy_agent/testnet.env.example
+          test -f runtime/synergy_agent/mainnet.env.example
+          test -z "$(git ls-files 'runtime/synergy_agent/local/*' ':!runtime/synergy_agent/local/.gitkeep')"

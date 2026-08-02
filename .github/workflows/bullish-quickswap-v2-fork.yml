@@ -1,0 +1,38 @@
+name: Bullish QuickSwap V2 Polygon Fork
+
+on:
+  pull_request:
+    paths:
+      - "contracts/microcycle/BullishQuickSwapRefillV2.sol"
+      - "test/bullish_quickswap_refill_v2_polygon_fork.js"
+      - "scripts/deploy_bullish_quickswap_v2.js"
+      - "scripts/run_bullish_quickswap_first10.js"
+      - ".github/workflows/bullish-quickswap-v2-fork.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-and-fork:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      POLYGON_RPC_URL: https://polygon.drpc.org
+      FORK_BLOCK_NUMBER: "90790000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Syntax-check deployment runners
+        run: |
+          node --check scripts/deploy_bullish_quickswap_v2.js
+          node --check scripts/run_bullish_quickswap_first10.js
+          node --check scripts/synergy_secure_hardhat.js
+      - name: Compile exact V2 contracts
+        run: npx hardhat compile --force
+      - name: Run Polygon QuickSwap fork tests
+        run: npx hardhat test test/bullish_quickswap_refill_v2_polygon_fork.js --network hardhat

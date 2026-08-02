@@ -19,11 +19,10 @@ private key.
 
 ### Phase 1 — simulator
 
-Train and validate the economic policy without a wallet:
-
-```bash
-python ai_centrobank/synergy_rl_economy_simulator.py --quick
-```
+Run the previously prepared offline RL simulator locally without a wallet. The
+security PR deliberately does not duplicate the large model source; its scope is
+the vault, deterministic risk guard and chain preflight. The model will be wired
+into the guarded policy interface only after this security gate is green.
 
 ### Phase 2 — Amoy read-only shadow
 

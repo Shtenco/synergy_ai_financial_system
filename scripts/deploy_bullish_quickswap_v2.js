@@ -6,8 +6,12 @@ const path = require("path");
 const hre = require("hardhat");
 const { ethers } = hre;
 
-const ARM_PHRASE = "DEPLOY_BULLISH_QS_V2_MAINNET";
+const ARM_PHRASE = "DEPLOY_BULLISH_QS_SCALED175_MAINNET";
 const ROTATED_ACK = "I_CREATED_A_NEW_UNSHARED_KEY";
+const CONTROLLER_IMPLEMENTATION = "BullishQuickSwapScaled175";
+const DEAL_SCALE_BPS = 17_500;
+const BUY_USDT = "0.175";
+const SELL_NOTIONAL_USDT = "0.07";
 
 function required(name) {
   const value = String(process.env[name] || "").trim();
@@ -35,25 +39,36 @@ function requirePositiveForkGate() {
   );
   if (!fs.existsSync(reportPath)) throw new Error("Mainnet gate report is missing");
   const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
-  if (
-    report.decision !== "ALLOW_MAINNET_DEPLOYMENT" ||
-    Number(report.netGrowthAfterGasUsdt) <= 0 ||
-    report.privateKeyLoaded !== false ||
-    report.transactionBroadcast !== false
-  ) {
-    throw new Error("Mainnet blocked: first-ten fork growth did not exceed full gas");
+  const positive =
+    report.decision === "ALLOW_MAINNET_DEPLOYMENT" &&
+    Number(report.netGrowthAfterGasUsdt) > 0 &&
+    Number(report.gasCoverageMultiple) >= 1.5 &&
+    Number(report.netAt150PctGasUsdt) > 0 &&
+    report.refillRegressionPassed === true &&
+    report.privateKeyLoaded === false &&
+    report.transactionBroadcast === false;
+  if (!positive) {
+    throw new Error(
+      "Mainnet blocked: Scaled175 first-ten and refill gate has not explicitly authorized deployment"
+    );
   }
   return report;
 }
 
 async function main() {
   const network = await ethers.provider.getNetwork();
-  if (Number(network.chainId) !== 137) throw new Error(`Expected Polygon chainId 137, got ${network.chainId}`);
+  if (Number(network.chainId) !== 137) {
+    throw new Error(`Expected Polygon chainId 137, got ${network.chainId}`);
+  }
 
   const executionMode = required("EXECUTION_MODE");
-  if (!["dry-run", "execute"].includes(executionMode)) throw new Error("EXECUTION_MODE must be dry-run or execute");
+  if (!["dry-run", "execute"].includes(executionMode)) {
+    throw new Error("EXECUTION_MODE must be dry-run or execute");
+  }
   if (required("KEY_ROTATED_ACK") !== ROTATED_ACK) {
-    throw new Error("Refusing deployment: create a new private key that has never been shared, then set KEY_ROTATED_ACK");
+    throw new Error(
+      "Refusing deployment: create a new private key that has never been shared, then set KEY_ROTATED_ACK"
+    );
   }
   if (executionMode === "execute") {
     if (required("MAINNET_ARM_PHRASE") !== ARM_PHRASE) {
@@ -65,7 +80,9 @@ async function main() {
   const [signer] = await ethers.getSigners();
   const signerAddress = await signer.getAddress();
   const expected = asAddress("EXPECTED_DEPLOYER_ADDRESS");
-  if (signerAddress.toLowerCase() !== expected.toLowerCase()) throw new Error("Signer does not match EXPECTED_DEPLOYER_ADDRESS");
+  if (signerAddress.toLowerCase() !== expected.toLowerCase()) {
+    throw new Error("Signer does not match EXPECTED_DEPLOYER_ADDRESS");
+  }
 
   const routerAddress = asAddress("QUICKSWAP_V2_ROUTER");
   const usdtAddress = asAddress("POLYGON_USDT");
@@ -81,16 +98,24 @@ async function main() {
   );
   const [factoryAddress, routerWrapped] = await Promise.all([router.factory(), router.WETH()]);
   await requireCode(ethers.provider, "factory", factoryAddress);
-  if (routerWrapped.toLowerCase() !== wpolAddress.toLowerCase()) throw new Error("Router wrapped-native token mismatch");
+  if (routerWrapped.toLowerCase() !== wpolAddress.toLowerCase()) {
+    throw new Error("Router wrapped-native token mismatch");
+  }
 
-  const usdt = new ethers.Contract(usdtAddress, ["function balanceOf(address) view returns(uint256)"], signer);
+  const usdt = new ethers.Contract(
+    usdtAddress,
+    ["function balanceOf(address) view returns(uint256)"],
+    signer
+  );
   const [nativeBalance, usdtBalance] = await Promise.all([
     ethers.provider.getBalance(signerAddress),
     usdt.balanceOf(signerAddress),
   ]);
   const poolUsdt = ethers.parseUnits(process.env.INIT_POOL_USDT || "1", 6);
   const workingUsdt = ethers.parseUnits(process.env.INIT_ROBOT_USDT || "1", 6);
-  if (usdtBalance < poolUsdt + workingUsdt) throw new Error("Insufficient USDT for pool and robot capital");
+  if (usdtBalance < poolUsdt + workingUsdt) {
+    throw new Error("Insufficient USDT for pool and robot capital");
+  }
   const minimumPol = ethers.parseEther(process.env.MIN_DEPLOYER_POL || "1");
   if (nativeBalance < minimumPol) throw new Error("Insufficient POL for deployment safety floor");
 
@@ -105,7 +130,10 @@ async function main() {
     deployerUsdt: ethers.formatUnits(usdtBalance, 6),
     executionMode,
     tokenImplementation: "RebaseSynaExactV3",
-    controllerImplementation: "BullishQuickSwapCentralBankV2",
+    controllerImplementation: CONTROLLER_IMPLEMENTATION,
+    dealScaleBps: DEAL_SCALE_BPS,
+    buyUsdt: BUY_USDT,
+    sellNotionalUsdt: SELL_NOTIONAL_USDT,
     privateKeyPrinted: false,
   };
   console.log(JSON.stringify(preflight, null, 2));
@@ -124,7 +152,7 @@ async function main() {
   await token.waitForDeployment();
   setupGasWei += receiptCost(await token.deploymentTransaction().wait(confirmations));
 
-  const Controller = await ethers.getContractFactory("BullishQuickSwapCentralBankV2", signer);
+  const Controller = await ethers.getContractFactory(CONTROLLER_IMPLEMENTATION, signer);
   const controller = await Controller.deploy(
     signerAddress,
     routerAddress,
@@ -135,6 +163,16 @@ async function main() {
   await controller.waitForDeployment();
   setupGasWei += receiptCost(await controller.deploymentTransaction().wait(confirmations));
 
+  if ((await controller.DEAL_SCALE_BPS()) !== BigInt(DEAL_SCALE_BPS)) {
+    throw new Error("Deployed controller deal scale mismatch");
+  }
+  if ((await controller.SCALED_BUY_USDT()) !== 175_000n) {
+    throw new Error("Deployed controller buy size mismatch");
+  }
+  if ((await controller.SCALED_SELL_NOTIONAL_USDT()) !== 70_000n) {
+    throw new Error("Deployed controller sell size mismatch");
+  }
+
   setupGasWei += receiptCost(
     await (await token.setController(await controller.getAddress())).wait(confirmations)
   );
@@ -144,7 +182,9 @@ async function main() {
     signer
   );
   setupGasWei += receiptCost(
-    await (await usdtWrite.approve(await controller.getAddress(), poolUsdt + workingUsdt)).wait(confirmations)
+    await (
+      await usdtWrite.approve(await controller.getAddress(), poolUsdt + workingUsdt)
+    ).wait(confirmations)
   );
   const deadline = Math.floor(Date.now() / 1000) + 1800;
   setupGasWei += receiptCost(
@@ -170,7 +210,7 @@ async function main() {
   };
   const outDir = path.join(process.cwd(), "deployments");
   fs.mkdirSync(outDir, { recursive: true });
-  const out = path.join(outDir, "bullish_qs_v3_polygon.json");
+  const out = path.join(outDir, "bullish_qs_scaled175_polygon.json");
   fs.writeFileSync(out, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 }

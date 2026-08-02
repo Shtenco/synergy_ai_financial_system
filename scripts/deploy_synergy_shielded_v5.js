@@ -9,8 +9,9 @@ const { ethers } = hre;
 const ARM_PHRASE = "DEPLOY_SYNERGY_SHIELDED_V5_MAINNET";
 const ROTATED_ACK = "I_CREATED_A_NEW_UNSHARED_KEY";
 const PRIVATE_ACK = "I_USE_A_PRIVATE_POLYGON_RPC";
-const USDT = "0xc2132d05d31c914a87c6611c10748aeb04b58e8f";
+const USDT = "0xc2132D05D31c914a87C6611C10748AEb04B58e8F";
 const REQUIRED_USDT = 2_000_000n;
+const MAX_RUNTIME_BYTES = 24_576;
 
 function required(name) {
   const value = String(process.env[name] || "").trim();
@@ -35,6 +36,7 @@ function requireGate() {
     report.routerZeroProtectionPassed === true &&
     report.frontRunProtectionPassed === true &&
     report.atomicBootstrapPassed === true &&
+    report.runtimeSizePassed === true &&
     report.refillRegressionPassed === true &&
     report.privateKeyLoaded === false &&
     report.transactionBroadcast === false;
@@ -50,12 +52,15 @@ async function main() {
   if (required("KEY_ROTATED_ACK") !== ROTATED_ACK) {
     throw new Error("Fresh never-shared key acknowledgement missing");
   }
+
+  const privateRpc = String(process.env.PRIVATE_POLYGON_RPC_URL || "").trim();
+  const publicRpc = String(process.env.POLYGON_RPC_URL || "").trim();
   if (executionMode === "execute") {
     if (required("PRIVATE_TX_ACK") !== PRIVATE_ACK) {
       throw new Error("Private Polygon RPC acknowledgement missing");
     }
-    if (!process.env.PRIVATE_POLYGON_RPC_URL) {
-      throw new Error("PRIVATE_POLYGON_RPC_URL is required for execution");
+    if (!privateRpc || privateRpc === publicRpc) {
+      throw new Error("A distinct PRIVATE_POLYGON_RPC_URL is required for execution");
     }
     if (required("MAINNET_ARM_PHRASE") !== ARM_PHRASE) {
       throw new Error("Mainnet arm phrase incorrect");
@@ -78,6 +83,7 @@ async function main() {
     USDT,
     [
       "function balanceOf(address) view returns(uint256)",
+      "function allowance(address,address) view returns(uint256)",
       "function approve(address,uint256) returns(bool)"
     ],
     signer
@@ -90,13 +96,24 @@ async function main() {
   if (polBalance < minPol) throw new Error("Insufficient POL safety balance");
   if (usdtBalance < REQUIRED_USDT) throw new Error("At least 2 USDT required");
 
+  const pendingNonce = await ethers.provider.getTransactionCount(signerAddress, "pending");
+  const predictedBootstrap = ethers.getCreateAddress({
+    from: signerAddress,
+    nonce: pendingNonce + 1
+  });
+  if ((await ethers.provider.getCode(predictedBootstrap)) !== "0x") {
+    throw new Error("Predicted bootstrap address already contains code");
+  }
+
   const preflight = {
     chainId: 137,
     signer: signerAddress,
     executionMode,
-    privateRpcConfigured: Boolean(process.env.PRIVATE_POLYGON_RPC_URL),
+    privateRpcConfigured: Boolean(privateRpc),
+    privateRpcDistinctFromPublic: Boolean(privateRpc && privateRpc !== publicRpc),
     polBalance: ethers.formatEther(polBalance),
     usdtBalance: ethers.formatUnits(usdtBalance, 6),
+    predictedBootstrap,
     tokenName: "Synergy Coin",
     tokenSymbol: "SYNA",
     pool: "SYNA/USDT QuickSwap V2",
@@ -110,19 +127,34 @@ async function main() {
   const confirmations = Number(process.env.DEPLOY_CONFIRMATIONS || "2");
   let setupGasWei = 0n;
 
+  const approveReceipt = await (
+    await usdt.approve(predictedBootstrap, REQUIRED_USDT)
+  ).wait(confirmations);
+  setupGasWei += receiptCost(approveReceipt);
+  if ((await usdt.allowance(signerAddress, predictedBootstrap)) < REQUIRED_USDT) {
+    throw new Error("Predicted bootstrap USDT allowance missing");
+  }
+
+  const secretSalt = ethers.hexlify(ethers.randomBytes(32));
   const Bootstrap = await ethers.getContractFactory("SynergyQuickSwapBootstrapV5", signer);
-  const bootstrap = await Bootstrap.deploy(signerAddress);
+  const unsignedDeploy = await Bootstrap.getDeployTransaction(signerAddress, secretSalt);
+  const estimatedGas = await ethers.provider.estimateGas({
+    ...unsignedDeploy,
+    from: signerAddress
+  });
+  const gasLimit = estimatedGas * 120n / 100n + 100_000n;
+  const maxDeployGas = BigInt(process.env.MAX_DEPLOY_GAS_LIMIT || "28000000");
+  if (gasLimit > maxDeployGas) {
+    throw new Error(`Deployment gas ${gasLimit} exceeds configured maximum ${maxDeployGas}`);
+  }
+
+  const bootstrap = await Bootstrap.deploy(signerAddress, secretSalt, { gasLimit });
   await bootstrap.waitForDeployment();
-  setupGasWei += receiptCost(await bootstrap.deploymentTransaction().wait(confirmations));
-
-  setupGasWei += receiptCost(
-    await (await usdt.approve(await bootstrap.getAddress(), REQUIRED_USDT)).wait(confirmations)
-  );
-
-  const latest = await ethers.provider.getBlock("latest");
-  const deadline = latest.timestamp + 90;
-  const bootstrapTx = await bootstrap.bootstrap(deadline);
-  setupGasWei += receiptCost(await bootstrapTx.wait(confirmations));
+  if ((await bootstrap.getAddress()).toLowerCase() !== predictedBootstrap.toLowerCase()) {
+    throw new Error("Bootstrap deployed at unexpected address");
+  }
+  const deployReceipt = await bootstrap.deploymentTransaction().wait(confirmations);
+  setupGasWei += receiptCost(deployReceipt);
 
   const tokenAddress = await bootstrap.token();
   const controllerAddress = await bootstrap.controller();
@@ -142,6 +174,13 @@ async function main() {
   if ((await ethers.provider.getCode(pairAddress)) === "0x") {
     throw new Error("QuickSwap pair not created");
   }
+  const bootstrapCode = await ethers.provider.getCode(await bootstrap.getAddress());
+  const bootstrapRuntimeBytes = (bootstrapCode.length - 2) / 2;
+  if (bootstrapRuntimeBytes > MAX_RUNTIME_BYTES) {
+    throw new Error(`Bootstrap runtime too large: ${bootstrapRuntimeBytes}`);
+  }
+  const freeFloat = await token.balanceOf(signerAddress);
+  if (freeFloat === 0n) throw new Error("Free-float SYNA was not delivered");
 
   const report = {
     ...preflight,
@@ -150,11 +189,16 @@ async function main() {
     token: tokenAddress,
     controller: controllerAddress,
     pair: pairAddress,
+    bootstrapRuntimeBytes,
+    deploymentGasEstimate: estimatedGas.toString(),
+    deploymentGasLimit: gasLimit.toString(),
     setupGasWei: setupGasWei.toString(),
     setupGasPol: ethers.formatEther(setupGasWei),
     tokenName: await token.name(),
     tokenSymbol: await token.symbol(),
+    freeFloatSyna: ethers.formatEther(freeFloat),
     initialMetricUsdt: ethers.formatUnits(await controller.systemMetricUsdt(), 6),
+    create2SaltCommitment: ethers.keccak256(secretSalt),
     transactionSigned: true,
     transactionBroadcast: true,
     timestamp: new Date().toISOString()

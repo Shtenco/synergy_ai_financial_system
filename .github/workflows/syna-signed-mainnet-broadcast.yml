@@ -5,7 +5,7 @@ on:
     branches:
       - feat/bullish-cb-v2-refill-safe-deploy
     paths:
-      - "runtime/synergy_agent/signed/syna_mainnet_signed.json"
+      - "runtime/synergy_agent/signed/syna_mainnet/READY"
 
 permissions:
   contents: read

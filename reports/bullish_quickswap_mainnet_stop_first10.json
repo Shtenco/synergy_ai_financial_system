@@ -1,0 +1,61 @@
+{
+  "scenario": "BULLISH_QUICKSWAP_FIRST10_MAINNET_GATE",
+  "criterion": "DELTA_TVL_PLUS_ROBOT_PLUS_CB_MINUS_FULL_SETUP_AND_CYCLE_GAS_GREATER_THAN_ZERO",
+  "decision": "STOP_MAINNET_DEPLOYMENT",
+  "reason": "FIRST_10_NET_NON_POSITIVE_ON_PINNED_POLYGON_FORK",
+  "network": {
+    "chainId": 137,
+    "forkBlock": 90790000
+  },
+  "testedImplementations": {
+    "routerV3": {
+      "token": "RebaseSynaExactV3",
+      "controller": "BullishQuickSwapCentralBankV2",
+      "cycles": 10,
+      "trades": 70,
+      "initialMetricUsdt": 3.0,
+      "finalMetricUsdt": 3.126713,
+      "grossGrowthUsdt": 0.126713,
+      "fullGasPol": 1.7691847359,
+      "fullGasUsdt": 0.1391984693,
+      "netGrowthAfterGasUsdt": -0.0124854693,
+      "priceMultiple": 1.388132403245,
+      "verdict": "STOP_FIRST_10_NON_POSITIVE"
+    },
+    "directPairV4": {
+      "token": "RebaseSynaExactV3",
+      "controller": "BullishQuickSwapDirectV4",
+      "cycles": 10,
+      "trades": 70,
+      "initialMetricUsdt": 3.0,
+      "finalMetricUsdt": 3.126713,
+      "grossGrowthUsdt": 0.126713,
+      "setupGasPol": 1.490186271730837,
+      "cycleGasPol": 0.306271958012188,
+      "fullGasPol": 1.796458229743025,
+      "fullGasUsdt": 0.14135371379413186,
+      "netGrowthAfterGasUsdt": -0.014640713794131871,
+      "priceMultiple": 1.388675070382,
+      "verdict": "STOP_FIRST_10_NON_POSITIVE"
+    }
+  },
+  "security": {
+    "uploadedKeyUsed": false,
+    "privateKeyLoaded": false,
+    "transactionSigned": false,
+    "transactionBroadcast": false,
+    "quickswapMainnetLiquidityAdded": false,
+    "mainnetContractsDeployed": false,
+    "reasonKeyRejected": "KEY_WAS_DISCLOSED_IN_CHAT_AND_MUST_BE_ROTATED"
+  },
+  "evidence": {
+    "publicCiRepository": "Shtenco/shtencoauantai.github.io",
+    "branch": "ci/bullish-cb-microcycle",
+    "directPairCommit": "6173328202005af7c6cc6d2fe4d21629103dbb8a",
+    "directPairWorkflowRunId": 30736337656,
+    "directPairWorkflowJobId": 91465686914,
+    "compilePassed": true,
+    "forkStarted": true,
+    "stopCriterionTriggered": true
+  }
+}

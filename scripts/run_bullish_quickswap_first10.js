@@ -6,6 +6,11 @@ const path = require("path");
 const hre = require("hardhat");
 const { ethers } = hre;
 
+const CONTROLLER_IMPLEMENTATION = "BullishQuickSwapScaled175";
+const EXPECTED_SCALE_BPS = 17_500n;
+const EXPECTED_BUY_USDT = 175_000n;
+const EXPECTED_SELL_USDT = 70_000n;
+
 function required(name) {
   const value = String(process.env[name] || "").trim();
   if (!value) throw new Error(`Missing ${name}`);
@@ -14,20 +19,29 @@ function required(name) {
 
 async function main() {
   const network = await ethers.provider.getNetwork();
-  if (Number(network.chainId) !== 137) throw new Error(`Expected chainId 137, got ${network.chainId}`);
-  if (required("EXECUTION_MODE") !== "execute") throw new Error("EXECUTION_MODE must be execute");
+  if (Number(network.chainId) !== 137) {
+    throw new Error(`Expected chainId 137, got ${network.chainId}`);
+  }
+  if (required("EXECUTION_MODE") !== "execute") {
+    throw new Error("EXECUTION_MODE must be execute");
+  }
   if (required("KEY_ROTATED_ACK") !== "I_CREATED_A_NEW_UNSHARED_KEY") {
     throw new Error("Fresh unshared key acknowledgement missing");
   }
-  if (required("FIRST10_ARM_PHRASE") !== "RUN_FIRST_10_BULLISH_QS_V2_CYCLES") {
+  if (required("FIRST10_ARM_PHRASE") !== "RUN_FIRST_10_BULLISH_QS_SCALED175_CYCLES") {
     throw new Error("FIRST10_ARM_PHRASE is incorrect");
   }
 
   const deploymentPath = path.resolve(
-    process.env.DEPLOYMENT_FILE || "deployments/bullish_qs_v3_polygon.json"
+    process.env.DEPLOYMENT_FILE || "deployments/bullish_qs_scaled175_polygon.json"
   );
   const deployment = JSON.parse(fs.readFileSync(deploymentPath, "utf8"));
-  if (!deployment.setupGasWei) throw new Error("Deployment report does not contain complete setup gas");
+  if (!deployment.setupGasWei) {
+    throw new Error("Deployment report does not contain complete setup gas");
+  }
+  if (deployment.controllerImplementation !== CONTROLLER_IMPLEMENTATION) {
+    throw new Error("Deployment report controller implementation mismatch");
+  }
 
   const [signer] = await ethers.getSigners();
   const signerAddress = await signer.getAddress();
@@ -36,10 +50,20 @@ async function main() {
   }
 
   const controller = await ethers.getContractAt(
-    "BullishQuickSwapCentralBankV2",
+    CONTROLLER_IMPLEMENTATION,
     deployment.controller,
     signer
   );
+  if ((await controller.DEAL_SCALE_BPS()) !== EXPECTED_SCALE_BPS) {
+    throw new Error("Controller deal scale mismatch");
+  }
+  if ((await controller.SCALED_BUY_USDT()) !== EXPECTED_BUY_USDT) {
+    throw new Error("Controller buy size mismatch");
+  }
+  if ((await controller.SCALED_SELL_NOTIONAL_USDT()) !== EXPECTED_SELL_USDT) {
+    throw new Error("Controller sell size mismatch");
+  }
+
   const router = new ethers.Contract(
     deployment.router,
     [
@@ -71,17 +95,23 @@ async function main() {
       if (treasury < maxUsdtIn) {
         const pauseTx = await controller.pause("GAS_REFILL_UNAVAILABLE");
         await pauseTx.wait(confirmations);
-        throw new Error("Keeper gas below floor and treasury cannot fund exact refill; controller paused");
+        throw new Error(
+          "Keeper gas below floor and treasury cannot fund exact refill; controller paused"
+        );
       }
       const deadline = Math.floor(Date.now() / 1000) + 600;
-      const refillTx = await controller.refillKeeperGas(exactGasTopup, maxUsdtIn, deadline);
+      const refillTx = await controller.refillKeeperGas(
+        exactGasTopup,
+        maxUsdtIn,
+        deadline
+      );
       const refillReceipt = await refillTx.wait(confirmations);
       runtimeGasWei += refillReceipt.gasUsed * (refillReceipt.gasPrice || 0n);
     }
 
     const nonce = await controller.nonce();
     const deadline = Math.floor(Date.now() / 1000) + 600;
-    const tx = await controller.executeCycle(nonce, deadline, 0);
+    const tx = await controller.executeScaledCycle(nonce, deadline, 0);
     const receipt = await tx.wait(confirmations);
     const gasWei = receipt.gasUsed * (receipt.gasPrice || 0n);
     runtimeGasWei += gasWei;
@@ -104,19 +134,26 @@ async function main() {
   const fullGasUsdt = gasQuote[1];
   const grossGrowth = finalMetric - initialMetric;
   const netGrowth = grossGrowth - fullGasUsdt;
-  const positive = netGrowth > 0n;
+  const gasCoverageBps = fullGasUsdt > 0n ? grossGrowth * 10_000n / fullGasUsdt : 0n;
+  const netAt150PctGas = grossGrowth - fullGasUsdt * 15n / 10n;
+  const robust = netGrowth > 0n && gasCoverageBps >= 15_000n && netAt150PctGas > 0n;
 
   let pauseTxHash = null;
-  if (!positive) {
-    const pauseTx = await controller.pause("FIRST_10_NET_NON_POSITIVE");
+  if (!robust) {
+    const pauseTx = await controller.pause("FIRST_10_NOT_ROBUST_AFTER_FULL_GAS");
     const pauseReceipt = await pauseTx.wait(confirmations);
     pauseTxHash = pauseReceipt.hash;
   }
 
   const report = {
     chainId: 137,
+    controllerImplementation: CONTROLLER_IMPLEMENTATION,
+    dealScaleBps: Number(EXPECTED_SCALE_BPS),
+    buyUsdt: ethers.formatUnits(EXPECTED_BUY_USDT, 6),
+    sellNotionalUsdt: ethers.formatUnits(EXPECTED_SELL_USDT, 6),
     cyclesCompleted: 10,
-    criterion: "DELTA_TVL_PLUS_ROBOT_PLUS_CB_MINUS_FULL_SETUP_AND_RUNTIME_GAS_GREATER_THAN_ZERO",
+    criterion:
+      "DELTA_TVL_PLUS_ROBOT_PLUS_CB_MINUS_FULL_SETUP_AND_RUNTIME_GAS_POSITIVE_WITH_1_5X_GAS_COVERAGE",
     initialMetricUsdt: ethers.formatUnits(initialMetric, 6),
     finalMetricUsdt: ethers.formatUnits(finalMetric, 6),
     grossGrowthUsdt: ethers.formatUnits(grossGrowth, 6),
@@ -125,20 +162,22 @@ async function main() {
     fullGasPol: ethers.formatEther(fullGasWei),
     fullGasUsdt: ethers.formatUnits(fullGasUsdt, 6),
     netGrowthAfterGasUsdt: ethers.formatUnits(netGrowth, 6),
+    gasCoverageMultiple: Number(gasCoverageBps) / 10_000,
+    netAt150PctGasUsdt: ethers.formatUnits(netAt150PctGas, 6),
     initialPriceX18: initialPrice.toString(),
     finalPriceX18: finalPrice.toString(),
-    verdict: positive ? "PASS_POSITIVE_FIRST_10" : "STOPPED_FIRST_10_NON_POSITIVE",
-    paused: !positive,
+    verdict: robust ? "PASS_ROBUST_POSITIVE_FIRST_10" : "STOPPED_FIRST_10_NON_ROBUST",
+    paused: !robust,
     pauseTxHash,
     cycles,
     privateKeyPrinted: false,
   };
   const outDir = path.join(process.cwd(), "reports");
   fs.mkdirSync(outDir, { recursive: true });
-  const out = path.join(outDir, "bullish_qs_v3_first10_polygon.json");
+  const out = path.join(outDir, "bullish_qs_scaled175_first10_polygon.json");
   fs.writeFileSync(out, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
-  if (!positive) process.exitCode = 2;
+  if (!robust) process.exitCode = 2;
 }
 
 main().catch((error) => {

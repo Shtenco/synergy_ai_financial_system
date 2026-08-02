@@ -5,9 +5,10 @@ import {IERC20QS, IQuickSwapRouter02V2, IQuickSwapFactoryV2, SafeTokenQS} from "
 import {RebaseSynaExactV3} from "./RebaseSynaExactV3.sol";
 import {BullishQuickSwapShieldedV5} from "./BullishQuickSwapShieldedV5.sol";
 
-/// @notice One-shot atomic deployment gateway for Synergy Coin (SYNA) on Polygon QuickSwap V2.
-/// @dev The SYNA token does not exist before bootstrap(), so an attacker cannot pre-create or
-///      seed the SYNA/USDT pair between token deployment and initial liquidity creation.
+/// @notice Constructor-atomic Polygon bootstrap for Synergy Coin (SYNA).
+/// @dev A private secret salt hides the future token address until this deployment
+///      is mined. Token, controller, QuickSwap pair and initial liquidity are
+///      created within the same constructor transaction.
 contract SynergyQuickSwapBootstrapV5 {
     using SafeTokenQS for IERC20QS;
 
@@ -15,7 +16,6 @@ contract SynergyQuickSwapBootstrapV5 {
     address public constant QUICKSWAP_V2_FACTORY = 0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32;
     address public constant POLYGON_USDT = 0xc2132D05D31c914a87C6611C10748AEb04B58e8F;
     address public constant POLYGON_WPOL = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;
-
     uint256 public constant INITIAL_TOTAL_SUPPLY = 1_000_000 ether;
     uint256 public constant INITIAL_POOL_SYNA = 500_000 ether;
     uint256 public constant INITIAL_POOL_USDT = 1_000_000;
@@ -24,14 +24,10 @@ contract SynergyQuickSwapBootstrapV5 {
 
     address public admin;
     address public pendingAdmin;
-    bool public bootstrapped;
+    RebaseSynaExactV3 public immutable token;
+    BullishQuickSwapShieldedV5 public immutable controller;
+    address public immutable pair;
 
-    RebaseSynaExactV3 public token;
-    BullishQuickSwapShieldedV5 public controller;
-    address public pair;
-
-    event AdminTransferStarted(address indexed currentAdmin, address indexed pendingAdmin);
-    event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
     event SynergyBootstrapped(
         address indexed token,
         address indexed controller,
@@ -39,56 +35,54 @@ contract SynergyQuickSwapBootstrapV5 {
         string name,
         string symbol,
         uint256 poolUsdt,
-        uint256 robotUsdt
+        uint256 robotUsdt,
+        uint256 freeFloatSyna
     );
+    event AdminTransferStarted(address indexed currentAdmin, address indexed pendingAdmin);
+    event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
+    event PolWithdrawn(address indexed recipient, uint256 amount);
 
     modifier onlyAdmin() {
         require(msg.sender == admin, "ADMIN");
         _;
     }
 
-    modifier afterBootstrap() {
-        require(bootstrapped, "NOT_BOOTSTRAPPED");
-        _;
-    }
-
-    constructor(address admin_) {
+    constructor(address admin_, bytes32 secretSalt) {
         require(block.chainid == 137, "POLYGON_ONLY");
         require(admin_ != address(0), "ZERO_ADMIN");
+        require(secretSalt != bytes32(0), "ZERO_SECRET_SALT");
         admin = admin_;
+
         IQuickSwapRouter02V2 router = IQuickSwapRouter02V2(QUICKSWAP_V2_ROUTER);
         require(router.factory() == QUICKSWAP_V2_FACTORY, "BAD_QUICKSWAP_FACTORY");
         require(router.WETH() == POLYGON_WPOL, "BAD_WPOL");
         require(QUICKSWAP_V2_ROUTER.code.length > 0, "NO_ROUTER_CODE");
         require(POLYGON_USDT.code.length > 0, "NO_USDT_CODE");
         require(POLYGON_WPOL.code.length > 0, "NO_WPOL_CODE");
-    }
-
-    /// @notice Admin must approve at least 2 USDT to this bootstrap contract first.
-    ///         Token, controller, pair and initial pool are then created atomically.
-    function bootstrap(uint256 deadline) external onlyAdmin {
-        require(!bootstrapped, "ALREADY_BOOTSTRAPPED");
-        require(block.timestamp <= deadline && deadline <= block.timestamp + 120 seconds, "DEADLINE");
 
         IERC20QS usdt = IERC20QS(POLYGON_USDT);
-        usdt.safeTransferFrom(admin, address(this), INITIAL_REQUIRED_USDT);
+        usdt.safeTransferFrom(admin_, address(this), INITIAL_REQUIRED_USDT);
 
-        RebaseSynaExactV3 newToken = new RebaseSynaExactV3(address(this));
+        bytes32 tokenSalt = keccak256(abi.encodePacked(secretSalt, bytes32("SYNA_TOKEN")));
+        RebaseSynaExactV3 newToken = new RebaseSynaExactV3{salt: tokenSalt}(address(this));
         require(
-            IQuickSwapFactoryV2(QUICKSWAP_V2_FACTORY).getPair(
-                address(newToken),
-                POLYGON_USDT
-            ) == address(0),
+            IQuickSwapFactoryV2(QUICKSWAP_V2_FACTORY).getPair(address(newToken), POLYGON_USDT)
+                == address(0),
             "PAIR_PREEXISTS"
         );
 
-        BullishQuickSwapShieldedV5 newController = new BullishQuickSwapShieldedV5(
+        bytes32 controllerSalt = keccak256(
+            abi.encodePacked(secretSalt, bytes32("SYNA_CONTROLLER"))
+        );
+        BullishQuickSwapShieldedV5 newController = new BullishQuickSwapShieldedV5{
+            salt: controllerSalt
+        }(
             address(this),
             QUICKSWAP_V2_ROUTER,
             POLYGON_USDT,
             POLYGON_WPOL,
             address(newToken),
-            admin
+            address(this)
         );
         newToken.setController(address(newController));
         usdt.forceApprove(address(newController), INITIAL_REQUIRED_USDT);
@@ -97,24 +91,24 @@ contract SynergyQuickSwapBootstrapV5 {
             INITIAL_POOL_SYNA,
             INITIAL_POOL_USDT,
             INITIAL_ROBOT_USDT,
-            deadline
+            block.timestamp
         );
 
         address newPair = address(newController.pair());
         require(newPair != address(0) && newPair.code.length > 0, "PAIR_NOT_CREATED");
         require(
-            IQuickSwapFactoryV2(QUICKSWAP_V2_FACTORY).getPair(
-                address(newToken),
-                POLYGON_USDT
-            ) == newPair,
+            IQuickSwapFactoryV2(QUICKSWAP_V2_FACTORY).getPair(address(newToken), POLYGON_USDT)
+                == newPair,
             "PAIR_FACTORY_MISMATCH"
         );
         require(usdt.balanceOf(address(this)) == 0, "BOOTSTRAP_USDT_REMAINDER");
 
+        uint256 freeFloat = newToken.balanceOf(address(this));
+        require(freeFloat > 0 && newToken.transfer(admin_, freeFloat), "FREE_FLOAT_TRANSFER");
+
         token = newToken;
         controller = newController;
         pair = newPair;
-        bootstrapped = true;
 
         emit SynergyBootstrapped(
             address(newToken),
@@ -123,9 +117,12 @@ contract SynergyQuickSwapBootstrapV5 {
             newToken.name(),
             newToken.symbol(),
             INITIAL_POOL_USDT,
-            INITIAL_ROBOT_USDT
+            INITIAL_ROBOT_USDT,
+            freeFloat
         );
     }
+
+    receive() external payable {}
 
     function startAdminTransfer(address newAdmin) external onlyAdmin {
         require(newAdmin != address(0) && newAdmin != admin, "BAD_ADMIN");
@@ -141,22 +138,14 @@ contract SynergyQuickSwapBootstrapV5 {
         emit AdminTransferred(previous, admin);
     }
 
-    function currentExecutionStateHash()
-        external
-        view
-        afterBootstrap
-        returns (bytes32)
-    {
-        return controller.currentExecutionStateHash();
-    }
-
-    function currentGasRouteStateHash()
-        external
-        view
-        afterBootstrap
-        returns (bytes32)
-    {
-        return controller.currentGasRouteStateHash();
+    function withdrawPol(address payable recipient, uint256 amount) external onlyAdmin {
+        require(
+            recipient != address(0) && amount > 0 && amount <= address(this).balance,
+            "BAD_POL_WITHDRAW"
+        );
+        (bool ok,) = recipient.call{value: amount}("");
+        require(ok, "POL_WITHDRAW_FAILED");
+        emit PolWithdrawn(recipient, amount);
     }
 
     function executeProtectedCycle(
@@ -165,15 +154,15 @@ contract SynergyQuickSwapBootstrapV5 {
         bytes32 expectedParentHash,
         uint256 deadline,
         uint256 maxGasPriceWei,
-        uint256 minSystemMetricUsdt
-    ) external onlyAdmin afterBootstrap {
+        uint256 minMetric
+    ) external onlyAdmin {
         controller.executeProtectedCycle(
             expectedNonce,
             expectedStateHash,
             expectedParentHash,
             deadline,
             maxGasPriceWei,
-            minSystemMetricUsdt
+            minMetric
         );
     }
 
@@ -183,7 +172,7 @@ contract SynergyQuickSwapBootstrapV5 {
         bytes32 expectedParentHash,
         uint256 deadline,
         uint256 maxGasPriceWei
-    ) external onlyAdmin afterBootstrap {
+    ) external onlyAdmin {
         controller.refillRobotCapitalProtected(
             targetUsdt,
             expectedStateHash,
@@ -196,54 +185,49 @@ contract SynergyQuickSwapBootstrapV5 {
     function refillKeeperGasProtected(
         uint256 exactPolOut,
         uint256 maxUsdtIn,
-        bytes32 expectedGasRouteStateHash,
-        bytes32 expectedParentHash,
+        bytes32 routeHash,
+        bytes32 parentHash,
         uint256 deadline,
         uint256 maxGasPriceWei
-    ) external onlyAdmin afterBootstrap returns (uint256 usdtSpent) {
+    ) external onlyAdmin returns (uint256) {
         return controller.refillKeeperGasProtected(
             exactPolOut,
             maxUsdtIn,
-            expectedGasRouteStateHash,
-            expectedParentHash,
+            routeHash,
+            parentHash,
             deadline,
             maxGasPriceWei
         );
     }
 
-    function setSecurityConfig(
-        uint256 maxTradeInputBps,
-        uint256 maxTradeOutputBps,
-        uint256 gasPriceCeilingWei
-    ) external onlyAdmin afterBootstrap {
-        controller.setSecurityConfig(
-            maxTradeInputBps,
-            maxTradeOutputBps,
-            gasPriceCeilingWei
-        );
+    function setSecurityConfig(uint256 inputBps, uint256 outputBps, uint256 gasCeiling)
+        external
+        onlyAdmin
+    {
+        controller.setSecurityConfig(inputBps, outputBps, gasCeiling);
     }
 
     function setRefillConfig(
-        uint256 robotTargetUsdt,
-        uint256 treasuryGasFloorUsdt,
-        uint256 maxSlippageBps,
-        uint256 maxLpRefillBps,
-        uint256 gasRefillCooldownBlocks
-    ) external onlyAdmin afterBootstrap {
+        uint256 robotTarget,
+        uint256 gasFloor,
+        uint256 slippageBps,
+        uint256 lpRefillBps,
+        uint256 cooldownBlocks
+    ) external onlyAdmin {
         controller.setRefillConfig(
-            robotTargetUsdt,
-            treasuryGasFloorUsdt,
-            maxSlippageBps,
-            maxLpRefillBps,
-            gasRefillCooldownBlocks
+            robotTarget,
+            gasFloor,
+            slippageBps,
+            lpRefillBps,
+            cooldownBlocks
         );
     }
 
-    function pause(string calldata reason) external onlyAdmin afterBootstrap {
+    function pause(string calldata reason) external onlyAdmin {
         controller.pause(reason);
     }
 
-    function unpause() external onlyAdmin afterBootstrap {
+    function unpause() external onlyAdmin {
         controller.unpause();
     }
 }

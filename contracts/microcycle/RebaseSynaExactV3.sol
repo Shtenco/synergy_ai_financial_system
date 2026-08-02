@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-/// @notice Elastic-supply SYNA with exact ERC-20 transfer deltas.
+/// @notice Elastic-supply Synergy Coin with exact ERC-20 transfer deltas.
 /// @dev Balances are stored in high-precision gons. A global negative rebase
 ///      increases gonsPerFragment, while local mint/burn changes totalGons.
 ///      Moving `amount * gonsPerFragment` guarantees both sender and receiver
 ///      fragment balances change by exactly `amount`, even after many rebases.
 contract RebaseSynaExactV3 {
-    string public constant name = "SYNERGY";
+    string public constant name = "Synergy Coin";
     string public constant symbol = "SYNA";
     uint8 public constant decimals = 18;
     uint256 public constant INITIAL_GONS_PER_FRAGMENT = 1e18;

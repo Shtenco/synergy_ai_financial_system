@@ -9,7 +9,7 @@ RPC_URLS = [
     os.environ.get("POLYGON_RPC_URL", "https://polygon.drpc.org"),
     "https://polygon-bor-rpc.publicnode.com",
 ]
-SIGNED_PATH = Path("runtime/synergy_agent/signed/syna_mainnet_signed.json")
+PACKAGE_DIR = Path("runtime/synergy_agent/signed/syna_mainnet")
 REPORT_PATH = Path("reports/syna_polygon_mainnet_deployment.json")
 USDT = "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"
 EVENT_TOPIC = "0xd50d8e944d94ea1cadaea69b894ac4f7fd05b4c70fccf7b876f0107ae82abf6a"
@@ -47,7 +47,7 @@ def allowance(token, owner, spender):
     return int(call(token, "0xdd62ed3e" + padded_address(owner) + padded_address(spender)), 16)
 
 
-def wait_receipt(tx_hash, attempts=180):
+def wait_receipt(tx_hash, attempts=240):
     for _ in range(attempts):
         receipt = rpc("eth_getTransactionReceipt", [tx_hash])
         if receipt:
@@ -58,7 +58,17 @@ def wait_receipt(tx_hash, attempts=180):
     raise TimeoutError(f"Receipt timeout: {tx_hash}")
 
 
-def send(raw, expected_hash):
+def existing_receipt(tx_hash):
+    receipt = rpc("eth_getTransactionReceipt", [tx_hash])
+    if receipt and int(receipt["status"], 16) != 1:
+        raise RuntimeError(f"Previously broadcast transaction reverted: {tx_hash}")
+    return receipt
+
+
+def send_or_resume(raw, expected_hash):
+    receipt = existing_receipt(expected_hash)
+    if receipt:
+        return receipt
     try:
         tx_hash = rpc("eth_sendRawTransaction", [raw])
         if tx_hash.lower() != expected_hash.lower():
@@ -84,29 +94,54 @@ def decode_string(value):
     return raw[offset + 32:offset + 32 + length].decode("utf-8")
 
 
+def load_signed_package():
+    if not (PACKAGE_DIR / "READY").exists():
+        raise RuntimeError("Signed package is not armed: READY is missing")
+    signed = json.loads((PACKAGE_DIR / "metadata.json").read_text())
+    signed["rawSwap"] = (PACKAGE_DIR / "raw_swap.txt").read_text().strip()
+    signed["rawApprove"] = (PACKAGE_DIR / "raw_approve.txt").read_text().strip()
+    deploy_parts = sorted(PACKAGE_DIR.glob("raw_deploy_*.txt"))
+    if not deploy_parts:
+        raise RuntimeError("Deploy transaction chunks are missing")
+    signed["rawDeploy"] = "".join(p.read_text().strip() for p in deploy_parts)
+    for key in ("rawSwap", "rawApprove", "rawDeploy"):
+        value = signed[key]
+        if not value.startswith("0x") or len(value) < 10:
+            raise RuntimeError(f"Invalid signed transaction field: {key}")
+    return signed
+
+
 def main():
-    signed = json.loads(SIGNED_PATH.read_text())
+    signed = load_signed_package()
     deployer = signed["deployer"]
     bootstrap = signed["bootstrapAddress"]
     if int(rpc("eth_chainId", []), 16) != 137:
         raise RuntimeError("Wrong chain")
-    current_nonce = int(rpc("eth_getTransactionCount", [deployer, "pending"]), 16)
-    if current_nonce != int(signed["nonceSwap"]):
-        raise RuntimeError(f"Nonce changed: {current_nonce} != {signed['nonceSwap']}")
-    if balance_of(USDT, deployer) >= 2_000_000:
-        raise RuntimeError("Funding state changed: deployer already has at least 2 USDT")
 
-    swap_receipt = send(signed["rawSwap"], signed["swapTxHash"])
+    nonce_pending = int(rpc("eth_getTransactionCount", [deployer, "pending"]), 16)
+    first_nonce = int(signed["nonceSwap"])
+    if nonce_pending < first_nonce or nonce_pending > int(signed["nonceDeploy"]) + 1:
+        raise RuntimeError(f"Unexpected pending nonce: {nonce_pending}")
+
+    swap_receipt = existing_receipt(signed["swapTxHash"])
+    if not swap_receipt:
+        if nonce_pending != first_nonce:
+            raise RuntimeError("Swap receipt missing but nonce already advanced")
+        swap_receipt = send_or_resume(signed["rawSwap"], signed["swapTxHash"])
     funded_usdt = balance_of(USDT, deployer)
     if funded_usdt < 2_000_000:
         raise RuntimeError(f"POL swap funded only {funded_usdt} raw USDT")
 
-    approve_receipt = send(signed["rawApprove"], signed["approveTxHash"])
+    approve_receipt = existing_receipt(signed["approveTxHash"])
+    if not approve_receipt:
+        approve_receipt = send_or_resume(signed["rawApprove"], signed["approveTxHash"])
     approved = allowance(USDT, deployer, bootstrap)
     if approved < 2_000_000:
         raise RuntimeError(f"Allowance is only {approved}")
 
-    deploy_receipt = send(signed["rawDeploy"], signed["deployTxHash"])
+    deploy_receipt = existing_receipt(signed["deployTxHash"])
+    if not deploy_receipt:
+        deploy_receipt = send_or_resume(signed["rawDeploy"], signed["deployTxHash"])
     if rpc("eth_getCode", [bootstrap, "latest"]) == "0x":
         raise RuntimeError("Bootstrap has no code after successful receipt")
 

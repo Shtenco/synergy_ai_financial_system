@@ -1,0 +1,80 @@
+{
+  "scenario": "SYNERGY_BULLISH_CB_CUMULATIVE_FORK_GRID_V1",
+  "criterion": "DELTA_TVL_PLUS_ROBOT_BALANCE_PLUS_CB_BALANCE_GREATER_THAN_GAS",
+  "network": {
+    "chainId": 137,
+    "forkBlock": 90790000
+  },
+  "requestedCheckpoints": [15, 50, 100, 250, 500],
+  "completedCycles": 140,
+  "stoppedEarly": true,
+  "stopAtNextCycle": 141,
+  "stopReason": "ROBOT_USDT",
+  "missingCheckpoints": [250, 500],
+  "grid": [
+    {
+      "cycles": 15,
+      "blocks": 150,
+      "trades": 105,
+      "priceMultiple": 1.674716808605,
+      "supplyChangePct": -28.390255288055965,
+      "tvlUsdt": 2.214583,
+      "robotBalanceUsdt": 0.99102,
+      "cbBalanceUsdt": 0.000579,
+      "totalTvlRobotCbUsdt": 3.206182,
+      "grossGrowthUsdt": 0.2061820000000001,
+      "fullGasUsdt": 0.07652331671534175,
+      "netGrowthAfterGasUsdt": 0.12965868328465835,
+      "gasCoverageMultiple": 2.694368316090823,
+      "solvent": true
+    },
+    {
+      "cycles": 50,
+      "blocks": 500,
+      "trades": 350,
+      "priceMultiple": 5.306102060323,
+      "supplyChangePct": -68.9322110107237,
+      "tvlUsdt": 2.655383,
+      "robotBalanceUsdt": 1.016109,
+      "cbBalanceUsdt": 0.004004,
+      "totalTvlRobotCbUsdt": 3.675496,
+      "grossGrowthUsdt": 0.6754959999999999,
+      "fullGasUsdt": 0.10986391813324362,
+      "netGrowthAfterGasUsdt": 0.5656320818667563,
+      "gasCoverageMultiple": 6.148479059164395,
+      "solvent": true
+    },
+    {
+      "cycles": 100,
+      "blocks": 1000,
+      "trades": 700,
+      "priceMultiple": 22.0271005514775,
+      "supplyChangePct": -89.72690748615001,
+      "tvlUsdt": 3.211985,
+      "robotBalanceUsdt": 1.116276,
+      "cbBalanceUsdt": 0.000885,
+      "totalTvlRobotCbUsdt": 4.329146,
+      "grossGrowthUsdt": 1.3291459999999997,
+      "fullGasUsdt": 0.15757579833431987,
+      "netGrowthAfterGasUsdt": 1.17157020166568,
+      "gasCoverageMultiple": 8.434962818211615,
+      "solvent": true
+    }
+  ],
+  "bestMeasuredCheckpoint": {
+    "cycles": 100,
+    "netGrowthAfterGasUsdt": 1.17157020166568,
+    "gasCoverageMultiple": 8.434962818211615
+  },
+  "evidence": {
+    "repository": "Shtenco/shtencoauantai.github.io",
+    "branch": "ci/bullish-cb-microcycle",
+    "commit": "b2cc18c81b3a36141c4d4a4934ce59501f8243e4",
+    "workflowRunId": 30734767629,
+    "workflowJobId": 91461453481,
+    "workflowConclusion": "success",
+    "artifactId": 8829172967,
+    "artifactSizeBytes": 85256,
+    "artifactDigest": "sha256:1728f309beda318ee4adcc6cad2727e0b4508b68c6407d243c89e27a50acd9be"
+  }
+}

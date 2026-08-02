@@ -23,11 +23,17 @@ async function main() {
     throw new Error("FIRST10_ARM_PHRASE is incorrect");
   }
 
-  const deploymentPath = path.resolve(process.env.DEPLOYMENT_FILE || "deployments/bullish_qs_v2_polygon.json");
+  const deploymentPath = path.resolve(
+    process.env.DEPLOYMENT_FILE || "deployments/bullish_qs_v3_polygon.json"
+  );
   const deployment = JSON.parse(fs.readFileSync(deploymentPath, "utf8"));
+  if (!deployment.setupGasWei) throw new Error("Deployment report does not contain complete setup gas");
+
   const [signer] = await ethers.getSigners();
   const signerAddress = await signer.getAddress();
-  if (signerAddress.toLowerCase() !== deployment.signer.toLowerCase()) throw new Error("Deployment signer mismatch");
+  if (signerAddress.toLowerCase() !== deployment.signer.toLowerCase()) {
+    throw new Error("Deployment signer mismatch");
+  }
 
   const controller = await ethers.getContractAt(
     "BullishQuickSwapCentralBankV2",
@@ -51,7 +57,8 @@ async function main() {
 
   const initialMetric = await controller.systemMetricUsdt();
   const initialPrice = await controller.spotPriceX18();
-  let totalGasWei = 0n;
+  const setupGasWei = BigInt(deployment.setupGasWei);
+  let runtimeGasWei = 0n;
   const cycles = [];
 
   for (let i = 0; i < 10; i += 1) {
@@ -61,11 +68,15 @@ async function main() {
       const pathToPol = [usdtAddress, wpolAddress];
       const quote = await router.getAmountsIn(exactGasTopup, pathToPol);
       const maxUsdtIn = quote[0] * (10_000n + refillSlippageBps) / 10_000n + 1n;
-      if (treasury < maxUsdtIn) throw new Error("Keeper gas below floor and treasury cannot fund exact refill");
+      if (treasury < maxUsdtIn) {
+        const pauseTx = await controller.pause("GAS_REFILL_UNAVAILABLE");
+        await pauseTx.wait(confirmations);
+        throw new Error("Keeper gas below floor and treasury cannot fund exact refill; controller paused");
+      }
       const deadline = Math.floor(Date.now() / 1000) + 600;
       const refillTx = await controller.refillKeeperGas(exactGasTopup, maxUsdtIn, deadline);
       const refillReceipt = await refillTx.wait(confirmations);
-      totalGasWei += refillReceipt.gasUsed * (refillReceipt.gasPrice || 0n);
+      runtimeGasWei += refillReceipt.gasUsed * (refillReceipt.gasPrice || 0n);
     }
 
     const nonce = await controller.nonce();
@@ -73,7 +84,7 @@ async function main() {
     const tx = await controller.executeCycle(nonce, deadline, 0);
     const receipt = await tx.wait(confirmations);
     const gasWei = receipt.gasUsed * (receipt.gasPrice || 0n);
-    totalGasWei += gasWei;
+    runtimeGasWei += gasWei;
     cycles.push({
       cycle: i + 1,
       txHash: receipt.hash,
@@ -88,10 +99,11 @@ async function main() {
 
   const finalMetric = await controller.systemMetricUsdt();
   const finalPrice = await controller.spotPriceX18();
-  const gasQuote = await router.getAmountsOut(totalGasWei, [wpolAddress, usdtAddress]);
-  const gasUsdt = gasQuote[1];
+  const fullGasWei = setupGasWei + runtimeGasWei;
+  const gasQuote = await router.getAmountsOut(fullGasWei, [wpolAddress, usdtAddress]);
+  const fullGasUsdt = gasQuote[1];
   const grossGrowth = finalMetric - initialMetric;
-  const netGrowth = BigInt(grossGrowth) - BigInt(gasUsdt);
+  const netGrowth = grossGrowth - fullGasUsdt;
   const positive = netGrowth > 0n;
 
   let pauseTxHash = null;
@@ -104,12 +116,14 @@ async function main() {
   const report = {
     chainId: 137,
     cyclesCompleted: 10,
-    criterion: "DELTA_TVL_PLUS_ROBOT_PLUS_CB_MINUS_GAS_GREATER_THAN_ZERO",
+    criterion: "DELTA_TVL_PLUS_ROBOT_PLUS_CB_MINUS_FULL_SETUP_AND_RUNTIME_GAS_GREATER_THAN_ZERO",
     initialMetricUsdt: ethers.formatUnits(initialMetric, 6),
     finalMetricUsdt: ethers.formatUnits(finalMetric, 6),
     grossGrowthUsdt: ethers.formatUnits(grossGrowth, 6),
-    gasPol: ethers.formatEther(totalGasWei),
-    gasUsdt: ethers.formatUnits(gasUsdt, 6),
+    setupGasPol: ethers.formatEther(setupGasWei),
+    runtimeGasPol: ethers.formatEther(runtimeGasWei),
+    fullGasPol: ethers.formatEther(fullGasWei),
+    fullGasUsdt: ethers.formatUnits(fullGasUsdt, 6),
     netGrowthAfterGasUsdt: ethers.formatUnits(netGrowth, 6),
     initialPriceX18: initialPrice.toString(),
     finalPriceX18: finalPrice.toString(),
@@ -121,7 +135,7 @@ async function main() {
   };
   const outDir = path.join(process.cwd(), "reports");
   fs.mkdirSync(outDir, { recursive: true });
-  const out = path.join(outDir, "bullish_qs_v2_first10_polygon.json");
+  const out = path.join(outDir, "bullish_qs_v3_first10_polygon.json");
   fs.writeFileSync(out, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
   if (!positive) process.exitCode = 2;

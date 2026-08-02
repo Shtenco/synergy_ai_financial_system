@@ -23,7 +23,8 @@ module.exports = {
     settings: {
       optimizer: { enabled: true, runs: 500 },
       viaIR: true,
-      evmVersion: "paris"
+      evmVersion: "paris",
+      metadata: { bytecodeHash: "none" }
     }
   },
   networks: {

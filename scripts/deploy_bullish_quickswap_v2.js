@@ -19,6 +19,10 @@ function asAddress(name) {
   return ethers.getAddress(required(name));
 }
 
+function receiptCost(receipt) {
+  return receipt.gasUsed * (receipt.gasPrice || 0n);
+}
+
 async function requireCode(provider, label, address) {
   const code = await provider.getCode(address);
   if (code === "0x") throw new Error(`${label} has no code: ${address}`);
@@ -113,11 +117,12 @@ async function main() {
   const confirmations = Number(process.env.DEPLOY_CONFIRMATIONS || "2");
   const totalSupply = ethers.parseEther(process.env.INIT_TOTAL_SUPPLY || "1000000");
   const poolToken = ethers.parseEther(process.env.INIT_POOL_SYNA || "500000");
+  let setupGasWei = 0n;
 
   const Token = await ethers.getContractFactory("RebaseSynaExactV3", signer);
   const token = await Token.deploy(signerAddress);
   await token.waitForDeployment();
-  await token.deploymentTransaction().wait(confirmations);
+  setupGasWei += receiptCost(await token.deploymentTransaction().wait(confirmations));
 
   const Controller = await ethers.getContractFactory("BullishQuickSwapCentralBankV2", signer);
   const controller = await Controller.deploy(
@@ -128,19 +133,25 @@ async function main() {
     await token.getAddress()
   );
   await controller.waitForDeployment();
-  await controller.deploymentTransaction().wait(confirmations);
+  setupGasWei += receiptCost(await controller.deploymentTransaction().wait(confirmations));
 
-  await (await token.setController(await controller.getAddress())).wait(confirmations);
+  setupGasWei += receiptCost(
+    await (await token.setController(await controller.getAddress())).wait(confirmations)
+  );
   const usdtWrite = new ethers.Contract(
     usdtAddress,
     ["function approve(address,uint256) returns(bool)"],
     signer
   );
-  await (await usdtWrite.approve(await controller.getAddress(), poolUsdt + workingUsdt)).wait(confirmations);
+  setupGasWei += receiptCost(
+    await (await usdtWrite.approve(await controller.getAddress(), poolUsdt + workingUsdt)).wait(confirmations)
+  );
   const deadline = Math.floor(Date.now() / 1000) + 1800;
-  await (
-    await controller.initialize(totalSupply, poolToken, poolUsdt, workingUsdt, deadline)
-  ).wait(confirmations);
+  setupGasWei += receiptCost(
+    await (
+      await controller.initialize(totalSupply, poolToken, poolUsdt, workingUsdt, deadline)
+    ).wait(confirmations)
+  );
 
   const pairAddress = await controller.pair();
   await requireCode(ethers.provider, "SYNA/USDT pair", pairAddress);
@@ -151,6 +162,8 @@ async function main() {
     controller: await controller.getAddress(),
     pair: pairAddress,
     initialized: true,
+    setupGasWei: setupGasWei.toString(),
+    setupGasPol: ethers.formatEther(setupGasWei),
     txSigned: true,
     txBroadcast: true,
     timestamp: new Date().toISOString(),

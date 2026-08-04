@@ -1,0 +1,104 @@
+name: Bybit Demo Credit Pyramid Live Test
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'bybit_demo_runner/**'
+      - '.github/workflows/bybit-demo-credit-pyramid.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  demo-live-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout test branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Generate one-time RSA key
+        shell: bash
+        run: |
+          set -euo pipefail
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out /tmp/bybit_private.pem >/dev/null 2>&1
+          openssl pkey -in /tmp/bybit_private.pem -pubout -out /tmp/bybit_public.pem >/dev/null 2>&1
+          cp /tmp/bybit_public.pem bybit_public_${GITHUB_RUN_ID}.pem
+
+      - name: Publish one-time public key
+        uses: actions/upload-artifact@v4
+        with:
+          name: bybit-demo-public-key-${{ github.run_id }}
+          path: bybit_public_${{ github.run_id }}.pem
+          retention-days: 1
+
+      - name: Wait for encrypted demo credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE="bybit_demo_runner/payload_${GITHUB_RUN_ID}.enc"
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}/contents/${FILE}?ref=${HEAD_BRANCH}"
+          found=0
+          for i in $(seq 1 180); do
+            code=$(curl -sS -o /tmp/payload_meta.json -w '%{http_code}' \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$API" || true)
+            if [ "$code" = "200" ]; then
+              jq -r '.content' /tmp/payload_meta.json | tr -d '\n' | base64 -d > /tmp/payload.enc
+              found=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$found" != "1" ]; then
+            echo "Encrypted payload was not supplied in time" >&2
+            exit 2
+          fi
+          openssl pkeyutl -decrypt \
+            -inkey /tmp/bybit_private.pem \
+            -in /tmp/payload.enc \
+            -out /tmp/bybit_demo.env \
+            -pkeyopt rsa_padding_mode:oaep \
+            -pkeyopt rsa_oaep_md:sha256
+          chmod 600 /tmp/bybit_demo.env
+          test "$(wc -l < /tmp/bybit_demo.env)" -ge 2
+
+      - name: Install dependency
+        run: python -m pip install --disable-pip-version-check requests
+
+      - name: Run live Demo test and close positions
+        shell: bash
+        run: |
+          set -euo pipefail
+          export BYBIT_DEMO_API_KEY="$(sed -n '1p' /tmp/bybit_demo.env | tr -d '\r\n')"
+          export BYBIT_DEMO_API_SECRET="$(sed -n '2p' /tmp/bybit_demo.env | tr -d '\r\n')"
+          trap 'unset BYBIT_DEMO_API_KEY BYBIT_DEMO_API_SECRET; rm -f /tmp/bybit_demo.env /tmp/payload.enc /tmp/bybit_private.pem' EXIT
+          python bybit_demo_runner/live_credit_pyramid.py \
+            --capital 30 \
+            --steps 30 \
+            --quantile 0.99 \
+            --execute \
+            --force-cross \
+            --close-after \
+            --output bybit_demo_results
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bybit-demo-credit-pyramid-results-${{ github.run_id }}
+          path: bybit_demo_results
+          if-no-files-found: warn
+          retention-days: 7

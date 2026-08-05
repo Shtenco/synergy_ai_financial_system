@@ -1,0 +1,67 @@
+name: SYNA V5 Polygon Fork
+
+on:
+  push:
+    branches:
+      - ci/syna-v5-fork-20260805
+    paths:
+      - 'ci/syna-v5-fork/**'
+      - '.github/workflows/syna-v5-fork.yml'
+
+permissions:
+  contents: read
+
+env:
+  POLYGON_RPC: https://polygon-bor-rpc.publicnode.com
+  FORK_CYCLES: '3'
+  FORK_FEE_CEILING_GWEI: '2000'
+  FORK_DEBUG: '1'
+
+jobs:
+  fork-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Create ephemeral fork-only wallet
+        run: echo "OWNER_PRIVATE_KEY=0x$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Reconstruct clean test package
+        run: |
+          mkdir -p /tmp/syna-v5
+          cat ci/syna-v5-fork/project.b64.* | base64 --decode > /tmp/syna-v5/project.tar.gz
+          tar -xzf /tmp/syna-v5/project.tar.gz -C /tmp/syna-v5
+          rm /tmp/syna-v5/project.tar.gz
+          find /tmp/syna-v5 -maxdepth 3 -type f -print
+
+      - name: Install dependencies
+        working-directory: /tmp/syna-v5
+        run: npm install --no-audit --no-fund
+
+      - name: Compile and bytecode-size test
+        working-directory: /tmp/syna-v5
+        run: |
+          npm run compile 2>&1 | tee compile.log
+          npm test 2>&1 | tee test.log
+
+      - name: Polygon fork deployment, cycles and cash-out
+        working-directory: /tmp/syna-v5
+        run: npm run fork:test 2>&1 | tee fork.log
+
+      - name: Upload fork evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: syna-v5-fork-evidence
+          path: |
+            /tmp/syna-v5/compile.log
+            /tmp/syna-v5/test.log
+            /tmp/syna-v5/fork.log
+            /tmp/syna-v5/artifacts/contracts/**/*.json
+          if-no-files-found: warn
+          retention-days: 7

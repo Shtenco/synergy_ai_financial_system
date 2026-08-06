@@ -1,0 +1,76 @@
+name: Oracle TVL Polygon Fork V3
+
+on:
+  push:
+    branches:
+      - audit/oracle-tvl-fork-v3-20260806
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fork-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Restore test package
+        shell: bash
+        run: |
+          mkdir -p /tmp/oracle-tvl
+          echo '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' | base64 -d > /tmp/oracle-tvl/project.tar.gz
+          cd /tmp/oracle-tvl
+          tar -xzf project.tar.gz
+          mv fork_ci_payload project
+
+      - name: Local EVM tests
+        shell: bash
+        run: |
+          cd /tmp/oracle-tvl/project
+          forge test --match-path 'test/OracleTVL.local.t.sol' -vvv 2>&1 | tee local_evm.log
+
+      - name: Polygon fork test with RPC fallback
+        shell: bash
+        run: |
+          cd /tmp/oracle-tvl/project
+          set +e
+          success=0
+          for rpc in \
+            'https://polygon-rpc.com' \
+            'https://polygon-bor-rpc.publicnode.com' \
+            'https://rpc.ankr.com/polygon' \
+            'https://polygon.drpc.org'; do
+            echo "=== TRY RPC: $rpc ===" | tee -a polygon_fork.log
+            POLYGON_RPC_URL="$rpc" forge test \
+              --match-path 'test/OracleTVL.polygonFork.t.sol' \
+              -vvvv 2>&1 | tee -a polygon_fork.log
+            code=${PIPESTATUS[0]}
+            if [ "$code" -eq 0 ]; then
+              success=1
+              echo "FORK_RPC_USED=$rpc" | tee fork_summary.txt
+              break
+            fi
+          done
+          if [ "$success" -ne 1 ]; then
+            echo 'All public Polygon RPC endpoints failed' | tee fork_summary.txt
+            exit 1
+          fi
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-tvl-fork-v3-logs
+          path: |
+            /tmp/oracle-tvl/project/local_evm.log
+            /tmp/oracle-tvl/project/polygon_fork.log
+            /tmp/oracle-tvl/project/fork_summary.txt
+          if-no-files-found: warn

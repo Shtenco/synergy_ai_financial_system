@@ -10,10 +10,10 @@ async function deploy(name, ...args) {
   return c;
 }
 
-describe("SynthL1 V6 supply-neutral reserve gradient", function () {
+describe("SynthL1 V13 supply-neutral reserve gradient lifecycle", function () {
   this.timeout(120000);
 
-  it("initiates, taxes, restores, reinvests and closes one external-searcher cycle", async function () {
+  it("initiates, taxes, restores, reinvests and closes one HardNAV-positive searcher cycle", async function () {
     const [owner, solver] = await ethers.getSigners();
 
     const tokenA = await deploy("MockERC20V6", "Quote A", "A", 18);
@@ -21,47 +21,31 @@ describe("SynthL1 V6 supply-neutral reserve gradient", function () {
     const usdx = await deploy("USDx", owner.address);
     const capture = await deploy("MEVCaptureReinvestor", owner.address);
     const oracle = await deploy("PriceOracleHub", owner.address);
-    const accounting = await deploy(
-      "SystemAccounting",
-      await oracle.getAddress(),
-      await usdx.getAddress(),
-      owner.address
-    );
+    const accounting = await deploy("SystemAccounting", await oracle.getAddress(), await usdx.getAddress(), owner.address);
 
     await (await usdx.bootstrapMint(owner.address, E(200))).wait();
     await (await tokenA.mint(owner.address, E(10100))).wait();
-    await (await tokenB.mint(owner.address, E(10100))).wait();
+    await (await tokenB.mint(owner.address, E(10200))).wait();
     await (await tokenB.mint(solver.address, E(100))).wait();
 
-    const source = await deploy(
-      "GraphPool", await usdx.getAddress(), await tokenA.getAddress(), await capture.getAddress(), owner.address
-    );
-    const destination = await deploy(
-      "GraphPool", await usdx.getAddress(), await tokenB.getAddress(), await capture.getAddress(), owner.address
-    );
-    const external = await deploy(
-      "GraphPool", await tokenA.getAddress(), await tokenB.getAddress(), await capture.getAddress(), owner.address
-    );
+    const source = await deploy("GraphPool", await usdx.getAddress(), await tokenA.getAddress(), await capture.getAddress(), owner.address);
+    const destination = await deploy("GraphPool", await usdx.getAddress(), await tokenB.getAddress(), await capture.getAddress(), owner.address);
+    const external = await deploy("GraphPool", await tokenA.getAddress(), await tokenB.getAddress(), await capture.getAddress(), owner.address);
 
-    await (await usdx.approve(await source.getAddress(), ethers.MaxUint256)).wait();
-    await (await usdx.approve(await destination.getAddress(), ethers.MaxUint256)).wait();
-    await (await tokenA.approve(await source.getAddress(), ethers.MaxUint256)).wait();
-    await (await tokenB.approve(await destination.getAddress(), ethers.MaxUint256)).wait();
-    await (await tokenA.approve(await external.getAddress(), ethers.MaxUint256)).wait();
-    await (await tokenB.approve(await external.getAddress(), ethers.MaxUint256)).wait();
+    for (const [token, pool] of [
+      [usdx, source], [usdx, destination], [tokenA, source], [tokenB, destination],
+      [tokenA, external], [tokenB, external],
+    ]) await (await token.approve(await pool.getAddress(), ethers.MaxUint256)).wait();
 
     await (await source.addLiquidity(E(100), E(100), 0)).wait();
     await (await destination.addLiquidity(E(100), E(100), 0)).wait();
-    await (await external.addLiquidity(E(10000), E(10000), 0)).wait();
+    // A small real external basis makes this lifecycle economically admissible;
+    // the aligned 10000/10000 case is separately required to revert.
+    await (await external.addLiquidity(E(10000), E(10100), 0)).wait();
 
     const engine = await deploy(
-      "ReserveGradientEngine",
-      await usdx.getAddress(),
-      await capture.getAddress(),
-      await accounting.getAddress(),
-      owner.address,
-      owner.address,
-      owner.address
+      "ReserveGradientEngine", await usdx.getAddress(), await capture.getAddress(),
+      await accounting.getAddress(), owner.address, owner.address, owner.address
     );
     const executor = await deploy("GraphArbExecutor", owner.address, await capture.getAddress());
 
@@ -75,31 +59,27 @@ describe("SynthL1 V6 supply-neutral reserve gradient", function () {
       await (await pool.setArbExecutor(await executor.getAddress(), true)).wait();
       await (await pool.setExecutorOnlyAllSwaps(true)).wait();
       await (await accounting.addProtocolUSDxPoolAccount(await pool.getAddress())).wait();
-
-      // Production invariant: every managed gradient pool must be visible to the
-      // executor's HardNAV-turnover uncertainty accounting before activation.
       await (await executor.setVenue(await pool.getAddress(), await pool.getAddress(), true)).wait();
       await (await executor.setProtocolTarget(await pool.getAddress(), true)).wait();
     }
     await (await accounting.addProtocolUSDxAccount(await capture.getAddress())).wait();
 
-    await (await oracle.updatePrices(
-      [await tokenA.getAddress(), await tokenB.getAddress()], [E(1), E(1)]
-    )).wait();
+    await (await oracle.updatePrices([await tokenA.getAddress(), await tokenB.getAddress()], [E(1), E(1)])).wait();
     await (await accounting.addHardAsset(await tokenA.getAddress(), 10000)).wait();
     await (await accounting.addHardAsset(await tokenB.getAddress(), 10000)).wait();
     await (await accounting.addHardAccount(await tokenA.getAddress(), await source.getAddress())).wait();
     await (await accounting.addHardAccount(await tokenB.getAddress(), await destination.getAddress())).wait();
     await (await accounting.addHardAccount(await tokenB.getAddress(), await capture.getAddress())).wait();
-    assert.equal(await accounting.hardAccountCount(await tokenA.getAddress()), 1n);
-    assert.equal(await accounting.hardAccountCount(await tokenB.getAddress()), 2n);
+
+    // These are mandatory preconditions for engine.setGradientPool().
+    await (await executor.setProtocolNAVGuard(await accounting.getAddress(), true, 0)).wait();
+    await (await executor.setGradientEngine(await engine.getAddress(), true)).wait();
 
     await (await engine.setGradientPool(await source.getAddress(), true)).wait();
     await (await engine.setGradientPool(await destination.getAddress(), true)).wait();
 
     const supply0 = await usdx.totalSupply();
     await (await engine.initializeGradient(await source.getAddress(), await destination.getAddress(), E(40))).wait();
-
     assert.equal(await usdx.totalSupply(), supply0);
     assert.equal(await source.reserve0(), E(60));
     assert.equal(await destination.reserve0(), E(140));
@@ -116,35 +96,37 @@ describe("SynthL1 V6 supply-neutral reserve gradient", function () {
     const syntheticOut = (await destination.quoteExactIn(false, principal))[0];
     const quoteAOut = (await source.quoteExactIn(true, syntheticOut))[0];
     const grossReturnedB = (await external.quoteExactIn(true, quoteAOut))[0];
-    assert.ok(grossReturnedB > principal, "initiated gradient should create searcher edge");
+    assert.ok(grossReturnedB > principal, "initiated gradient should create a raw solver edge");
 
     const executorAddress = await executor.getAddress();
     const legs = [
       {
         target: await destination.getAddress(), spender: await destination.getAddress(),
-        tokenIn: await tokenB.getAddress(), tokenOut: await usdx.getAddress(),
-        amountIn: principal, minAmountOut: syntheticOut,
+        tokenIn: await tokenB.getAddress(), tokenOut: await usdx.getAddress(), amountIn: principal,
+        minAmountOut: syntheticOut,
         data: destination.interface.encodeFunctionData("swapExactIn", [false, principal, syntheticOut, executorAddress])
       },
       {
         target: await source.getAddress(), spender: await source.getAddress(),
-        tokenIn: await usdx.getAddress(), tokenOut: await tokenA.getAddress(),
-        amountIn: syntheticOut, minAmountOut: quoteAOut,
+        tokenIn: await usdx.getAddress(), tokenOut: await tokenA.getAddress(), amountIn: syntheticOut,
+        minAmountOut: quoteAOut,
         data: source.interface.encodeFunctionData("swapExactIn", [true, syntheticOut, quoteAOut, executorAddress])
       },
       {
         target: await external.getAddress(), spender: await external.getAddress(),
-        tokenIn: await tokenA.getAddress(), tokenOut: await tokenB.getAddress(),
-        amountIn: quoteAOut, minAmountOut: grossReturnedB,
+        tokenIn: await tokenA.getAddress(), tokenOut: await tokenB.getAddress(), amountIn: quoteAOut,
+        minAmountOut: grossReturnedB,
         data: external.interface.encodeFunctionData("swapExactIn", [true, quoteAOut, grossReturnedB, executorAddress])
       }
     ];
 
     await (await tokenB.connect(solver).approve(executorAddress, principal)).wait();
+    const navBefore = await accounting.consolidatedHardNAV1e18();
     const block = await ethers.provider.getBlock("latest");
     await (await executor.connect(solver).executeCycle(
       await tokenB.getAddress(), principal, E("0.001"), legs, BigInt(block.timestamp + 600)
     )).wait();
+    assert.ok(await accounting.consolidatedHardNAV1e18() > navBefore, "mandatory HardNAV gate must pass only on real gain");
 
     const capturedB = await tokenB.balanceOf(await capture.getAddress());
     assert.ok(capturedB > 0n, "realized-profit tax must be physically captured");

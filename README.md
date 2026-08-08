@@ -17,39 +17,43 @@ Unified architecture:
 
 ```
 contracts/          Solidity smart contracts
-contracts/synthl1/  SynthL1 recursive QE / MEV monetary engine
-ai_centrobank/     AI policy and optimization engine
-simulation/        Python economic simulations
-solver/            External solver and market-graph configuration
-docs/              Architecture and audit documents
-scripts/           Deployment and testing scripts
+contracts/synthl1/  SynthL1 supply-neutral reserve-gradient / MEV engine
+ai_centrobank/      AI policy and optimization engine
+simulation/         Python economic simulations
+solver/             External solver and market-graph configuration
+docs/               Architecture and audit documents
+scripts/            Deployment and testing scripts
 ```
 
-## SynthL1 V5 — recursive QE / MEV engine
+## SynthL1 V6 — self-created reserve-gradient / adaptive MEV engine
 
-The new module lives under [`contracts/synthl1/`](contracts/synthl1/README.md) and is deliberately separated from the older experiments.
+The integrated module lives under [`contracts/synthl1/`](contracts/synthl1/README.md).
+It restores the V12/V13 edge-initiation core and combines it with the later realized-profit MEV tax and accounting hardening.
 
-Its exact recursive cycle is:
+Exact recursive cycle:
 
-`initial USDx QE -> CORE buyback + burn -> graph price gradient -> external searcher arbitrage -> protocol USDx fee capture -> fee reinvestment -> next buyback + burn pulse`.
+`source synthetic burn -> equal destination synthetic mint -> self-created graph gradient -> external searcher route -> tax on realized arb profit -> exact synthetic target restore -> physical tax reinvestment -> repeat`.
 
-Fresh USDx is minted only for the initializing pulse. Reinvestment is limited by the USDx physically held by `MEVCaptureReinvestor`.
+The initial and restored gradient operations are supply-neutral: the controlled synthetic total supply must not change. Searchers supply their own route principal. The protocol can reinvest only assets physically received by `MEVCaptureReinvestor`.
 
-The existing root-level `GraphPolicy`, `GraphTreasury`, `OrderflowAuction`, `SecureFlashExecutor`, and `TimelockedMultisig` remain useful as the outer policy/security/solver layer rather than being duplicated inside SynthL1.
+The existing root-level `GraphPolicy`, `GraphTreasury`, `OrderflowAuction`, `SecureFlashExecutor`, and `TimelockedMultisig` remain the outer policy/security/solver layer rather than being duplicated inside SynthL1.
 
-Run the recursive economic model with:
+Run the new reference models with:
 
 ```bash
-npm run sim:synthl1
+npm run sim:synthl1:gradient
+npm run sim:synthl1:v13
 ```
 
-Run its focused unit tests with:
+Run the focused invariant tests with:
 
 ```bash
 npm run test:synthl1
+npm run test:synthl1:evm
 ```
 
-The example 15-market external graph configuration is in [`solver/synthl1/market-graph.example.json`](solver/synthl1/market-graph.example.json). Aggregator quotes are discovery inputs only; on-chain execution must still enforce allowlisted targets, explicit minimum outputs, and actual balance-delta profit checks.
+The V6 audit is in [`docs/SYNTHL1_V6_RESERVE_GRADIENT_AUDIT.md`](docs/SYNTHL1_V6_RESERVE_GRADIENT_AUDIT.md).
+The example external graph configuration remains in [`solver/synthl1/market-graph.example.json`](solver/synthl1/market-graph.example.json). Aggregator quotes are discovery/execution inputs only; on-chain execution still enforces allowlisted targets, minimum outputs and actual balance-delta realized-profit checks.
 
 ## Security
 
@@ -57,12 +61,13 @@ No private keys, seed phrases, RPC secrets or `.env` files belong in this reposi
 
 Before any mainnet deployment:
 
-1. Run fork tests.
-2. Verify contracts.
-3. Use a fresh deployment wallet.
-4. Configure timelock, guardian and risk limits.
+1. Run compiler and EVM tests.
+2. Run archival/fork tests.
+3. Verify contracts.
+4. Use a fresh deployment wallet.
+5. Configure timelock, oracle/reporters, guardian and risk limits.
 
-Status: architecture and local testing stage.
+Status: architecture, deterministic stateful simulation and integration-test stage. Fresh V6 compiler/fork execution is still a required deployment gate.
 
 The four-contract growth-cycle prototype and its economic limitations are
 documented in [`docs/SELF_SUSTAINING_GRAPH_DESIGN.md`](docs/SELF_SUSTAINING_GRAPH_DESIGN.md).

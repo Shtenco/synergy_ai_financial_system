@@ -21,6 +21,7 @@ async function setup() {
   const usdc = await deploy("MockERC20V6", "USDC", "USDC", 18);
   const synthetic = await deploy("MockERC20V6", "SYNA", "SYNA", 18);
   const oracle = await deploy("PriceOracleHub", owner.address);
+  const validationOracle = await deploy("PriceOracleHub", owner.address);
   const liabilities = await deploy("V15LiabilityRegistry", owner.address);
   const ledger = await deploy("V15EconomicLedger", owner.address, await oracle.getAddress(), await liabilities.getAddress());
   const risk = await deploy("V15RiskOracle", owner.address, await oracle.getAddress());
@@ -28,11 +29,14 @@ async function setup() {
   await (await usdc.mint(owner.address, E(200))).wait();
   await (await synthetic.mint(owner.address, E(1000000))).wait();
   await (await oracle.updatePrice(await usdc.getAddress(), E(1))).wait();
+  await (await validationOracle.updatePrice(await usdc.getAddress(), E(1))).wait();
 
   await (await ledger.permanentlyExcludeAsset(await synthetic.getAddress())).wait();
   await mustRevert(ledger.addHardAsset(await synthetic.getAddress()), "own synthetic must never become HardAsset");
   await (await ledger.addHardAsset(await usdc.getAddress())).wait();
   await (await ledger.setHardAccount(await usdc.getAddress(), owner.address, true)).wait();
+  await (await ledger.setValidationOracle(await validationOracle.getAddress(), true)).wait();
+  assert.equal(await ledger.oracleValidationCoversAllAssets(), true);
 
   const liabilityId = ethers.keccak256(ethers.toUtf8Bytes("USDX_REDEMPTION"));
   await (await liabilities.addLiability(liabilityId, 18, E(1), 10000, ethers.ZeroAddress, E(100))).wait();
@@ -54,6 +58,7 @@ async function setup() {
   await (await controller.pokeMode()).wait();
   await (await controller.pokeMode()).wait();
   assert.equal(await controller.mode(), 0n, "healthy system must reach GREEN");
+  assert.equal(await controller.searcherRouteAllowed(), true, "GREEN alone is not enough; validated Economic oracle must also be ready");
 
   const gate = await deploy("V15PostRouteGate", await controller.getAddress());
   const adapter = await deploy(
@@ -65,7 +70,7 @@ async function setup() {
     await controller.getAddress()
   );
 
-  return { owner, outsider, usdc, synthetic, oracle, liabilities, liabilityId, ledger, risk, controller, gate, adapter };
+  return { owner, outsider, usdc, synthetic, oracle, validationOracle, liabilities, liabilityId, ledger, risk, controller, gate, adapter };
 }
 
 async function revenueRouter(c) {
@@ -133,8 +138,6 @@ describe("V15 economic/risk overlay", function () {
     await (await c.usdc.mint(c.owner.address, E(50))).wait();
     await (await c.usdc.approve(await router.getAddress(), E(50))).wait();
     await (await router.recordEligibleRevenueToken(await c.usdc.getAddress(), c.owner.address, E(50))).wait();
-    // Risk assets are now 250. Requiring 230 leaves at most 20 canonical USD
-    // under the conservative 1 hard USD -> up to 1 risk USD assumption.
     await (await c.controller.setPortfolioLimits(E(230), 10000)).wait();
     assert.equal(await c.controller.distributionHeadroom1e18(), E(20));
     await (await router.settlePeriod()).wait();

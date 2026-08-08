@@ -17,11 +17,39 @@ Unified architecture:
 
 ```
 contracts/          Solidity smart contracts
+contracts/synthl1/  SynthL1 recursive QE / MEV monetary engine
 ai_centrobank/     AI policy and optimization engine
 simulation/        Python economic simulations
+solver/            External solver and market-graph configuration
 docs/              Architecture and audit documents
 scripts/           Deployment and testing scripts
 ```
+
+## SynthL1 V5 — recursive QE / MEV engine
+
+The new module lives under [`contracts/synthl1/`](contracts/synthl1/README.md) and is deliberately separated from the older experiments.
+
+Its exact recursive cycle is:
+
+`initial USDx QE -> CORE buyback + burn -> graph price gradient -> external searcher arbitrage -> protocol USDx fee capture -> fee reinvestment -> next buyback + burn pulse`.
+
+Fresh USDx is minted only for the initializing pulse. Reinvestment is limited by the USDx physically held by `MEVCaptureReinvestor`.
+
+The existing root-level `GraphPolicy`, `GraphTreasury`, `OrderflowAuction`, `SecureFlashExecutor`, and `TimelockedMultisig` remain useful as the outer policy/security/solver layer rather than being duplicated inside SynthL1.
+
+Run the recursive economic model with:
+
+```bash
+npm run sim:synthl1
+```
+
+Run its focused unit tests with:
+
+```bash
+npm run test:synthl1
+```
+
+The example 15-market external graph configuration is in [`solver/synthl1/market-graph.example.json`](solver/synthl1/market-graph.example.json). Aggregator quotes are discovery inputs only; on-chain execution must still enforce allowlisted targets, explicit minimum outputs, and actual balance-delta profit checks.
 
 ## Security
 

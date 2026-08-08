@@ -25,12 +25,14 @@ interface IProtocolNAVAccounting {
 ///
 /// V13.1 safety:
 /// - optional SystemAccounting post-trade HardNAV gate;
-/// - protocol-owned internal venues are explicitly marked;
-/// - absolute real-asset turnover through those venues is marked in USD;
+/// - managed internal venues are explicitly marked as protocolTarget;
+/// - registered hard accounts are also auto-detected, preventing a missing flag
+///   from omitting economically relevant turnover;
+/// - absolute real-asset turnover through protocol venues is marked in USD;
 /// - a configured oracle-error bound is multiplied by that turnover and added to
-///   the minimum required NAV gain. This implements the conservative condition:
+///   the minimum required NAV gain:
 ///
-///   measuredGain >= baseMinGain + sum(|delta hard asset| * price * errorBound).
+///   measuredGain >= baseMinGain + hardTurnover * maxOracleErrorBps / 10000.
 contract GraphArbExecutor {
     using SafeTransferLib for address;
 
@@ -243,11 +245,21 @@ contract GraphArbExecutor {
             uint256 received = afterOut > beforeOut ? afterOut - beforeOut : 0;
             if (received < leg.minAmountOut) revert InsufficientOutput();
 
-            if (enforceProtocolNAV && protocolTarget[leg.target]) {
-                if (accounting.isHardAsset(leg.tokenIn)) {
+            if (enforceProtocolNAV) {
+                bool explicitProtocolTarget = protocolTarget[leg.target];
+                bool registeredInputAccount = accounting.isHardAccount(leg.tokenIn, leg.target);
+                bool registeredOutputAccount = accounting.isHardAccount(leg.tokenOut, leg.target);
+
+                if (
+                    accounting.isHardAsset(leg.tokenIn) &&
+                    (explicitProtocolTarget || registeredInputAccount)
+                ) {
                     hardTurnover1e18 += accounting.markValue1e18(leg.tokenIn, leg.amountIn);
                 }
-                if (accounting.isHardAsset(leg.tokenOut)) {
+                if (
+                    accounting.isHardAsset(leg.tokenOut) &&
+                    (explicitProtocolTarget || registeredOutputAccount)
+                ) {
                     hardTurnover1e18 += accounting.markValue1e18(leg.tokenOut, received);
                 }
             }

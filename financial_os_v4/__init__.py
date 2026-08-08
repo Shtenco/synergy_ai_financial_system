@@ -25,12 +25,14 @@ from .productive_credit import (
     VerifierAttestation,
 )
 from .risk import LossAllocation, LossEvent, LossWaterfall
+from .rl_env import ConstrainedMonetaryEnv, PolicyTransition, RewardWeights
 from .snapshot import FinancialSnapshot
 
 __all__ = [
     "AssetPosition",
     "BalanceSheet",
     "Constitution",
+    "ConstrainedMonetaryEnv",
     "DemurrageAllocation",
     "DurationFundingBook",
     "FinancialSnapshot",
@@ -47,8 +49,10 @@ __all__ = [
     "MonetaryState",
     "PolicyBounds",
     "PolicyDecision",
+    "PolicyTransition",
     "ProductiveCapacity",
     "ProductiveCreditRequest",
+    "RewardWeights",
     "TripleMoneyLedger",
     "VerificationPolicy",
     "VerifierAttestation",

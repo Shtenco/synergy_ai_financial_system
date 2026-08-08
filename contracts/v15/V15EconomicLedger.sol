@@ -83,6 +83,13 @@ contract V15EconomicLedger {
         return primary < secondary ? primary : secondary;
     }
 
+    /// @notice Price-oracle ABI adapter for V15RiskOracle. Risk accounting can use
+    /// this ledger itself as its canonical anchor, guaranteeing that RiskNAV starts
+    /// from the same independently validated lower-of-two Economic mark.
+    function price1e18(address token) external view returns (uint256) {
+        return canonicalPrice1e18(token);
+    }
+
     /// @notice Activation readiness probe. It intentionally performs both fresh
     /// oracle reads for every hard asset. Any missing/stale feed reverts. A system
     /// with zero registered hard assets is never monetary-engine ready.

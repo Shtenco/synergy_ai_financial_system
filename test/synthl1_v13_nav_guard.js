@@ -88,6 +88,8 @@ async function fixture(externalA, externalB, minProtocolGain = "0") {
   for (const pool of [source, destination]) {
     await (await pool.setLiquidityManager(owner.address, true)).wait();
     await (await pool.setGradientController(await engine.getAddress())).wait();
+    await (await pool.setArbExecutor(await executor.getAddress(), true)).wait();
+    await (await pool.setExecutorOnlyAllSwaps(true)).wait();
     await (await accounting.addProtocolUSDxPoolAccount(await pool.getAddress())).wait();
   }
   await (await accounting.addProtocolUSDxAccount(await capture.getAddress())).wait();
@@ -107,7 +109,6 @@ async function fixture(externalA, externalB, minProtocolGain = "0") {
   await (await engine.setGradientPool(await destination.getAddress(), true)).wait();
   await (await engine.initializeGradient(await source.getAddress(), await destination.getAddress(), E(40))).wait();
 
-  await (await source.setArbExecutor(await executor.getAddress(), true)).wait();
   for (const pool of [source, destination, external]) {
     await (await executor.setVenue(await pool.getAddress(), await pool.getAddress(), true)).wait();
   }
@@ -200,9 +201,6 @@ describe("SynthL1 V13 post-trade HardNAV guard", function () {
   });
 
   it("accepts an initiated route that converts a latent external basis into positive HardNAV", async function () {
-    // External A/B spot is 1.01 B per A while oracle marks both at $1.
-    // This venue vector is not itself a cycle; the supply-neutral gradient creates
-    // the executable B->USDx->A->external(A/B)->B path.
     const ctx = await fixture("10000", "10100", "0.05");
     const principal = E("39.8");
     const { legs, returnedB } = await buildRoute(ctx, principal);

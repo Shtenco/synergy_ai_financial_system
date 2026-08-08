@@ -15,11 +15,6 @@ interface IERC20ManagedPool {
 /// @notice Generic constant-product graph pool used by the SynthL1 internal graph.
 /// token0 is the protocol-controlled synthetic reserve in managed gradient pools.
 /// token1 is the real/quote asset (USDT/USDC/WPOL/WETH/DAI/... ).
-///
-/// A managed pool can simultaneously enforce:
-/// - 100% protocol LP ownership via the liquidity-manager gate;
-/// - executor-only token0->token1 closing flow so realized-profit MEV tax cannot be bypassed;
-/// - a ReserveGradientEngine controller that may debit token0 reserve and sync actual balances.
 contract GraphPool {
     using SafeTransferLib for address;
 
@@ -30,10 +25,10 @@ contract GraphPool {
     address public owner;
     address public arbExecutor;
     bool public restrictZeroToOne;
+    bool public executorOnlyAllSwaps;
 
     address public liquidityManager;
     bool public restrictLiquidityProviders;
-
     address public gradientController;
 
     uint16 public lpFeeBps = 30;
@@ -51,6 +46,7 @@ contract GraphPool {
     event LPFeeSet(uint16 bps);
     event Paused(bool value);
     event ArbExecutorSet(address indexed executor, bool restrictZeroToOne);
+    event ExecutorOnlyAllSwapsSet(bool enabled);
     event LiquidityManagerSet(address indexed manager, bool restricted);
     event GradientControllerSet(address indexed controller);
     event GradientDebit(uint256 token0Amount, address indexed to, uint256 reserve0After);
@@ -92,14 +88,22 @@ contract GraphPool {
     }
 
     function setArbExecutor(address executor, bool restrictDirection) external onlyOwner {
-        if (restrictDirection && executor == address(0)) revert BadConfig();
+        if ((restrictDirection || executorOnlyAllSwaps) && executor == address(0)) revert BadConfig();
         arbExecutor = executor;
         restrictZeroToOne = restrictDirection;
         emit ArbExecutorSet(executor, restrictDirection);
     }
 
-    /// @notice Managed gradient pools should set restricted=true and manager to
-    /// the same protocolLiquidityOwner configured in SystemAccounting/GradientEngine.
+    /// @notice Production managed-gradient mode. When enabled, BOTH swap
+    /// directions must pass through GraphArbExecutor. This prevents a third party
+    /// from griefing source/destination synthetic restoration by directly buying
+    /// or selling synthetic between the searcher cycle and restoreGradient().
+    function setExecutorOnlyAllSwaps(bool enabled) external onlyOwner {
+        if (enabled && arbExecutor == address(0)) revert BadConfig();
+        executorOnlyAllSwaps = enabled;
+        emit ExecutorOnlyAllSwapsSet(enabled);
+    }
+
     function setLiquidityManager(address manager, bool restricted) external onlyOwner {
         if (restricted && manager == address(0)) revert BadConfig();
         liquidityManager = manager;
@@ -158,9 +162,6 @@ contract GraphPool {
         emit LiquidityRemoved(msg.sender, amount0, amount1, s);
     }
 
-    /// @notice Supply-neutral gradient primitive. Only token0 can be debited.
-    /// The controller must burn the received token0 and mint the same amount into
-    /// another protocol-owned managed pool in the same transaction.
     function gradientDebitToken0(uint256 amount, address to)
         external onlyGradientController nonReentrant active
     {
@@ -170,8 +171,6 @@ contract GraphPool {
         emit GradientDebit(amount, to, reserve0);
     }
 
-    /// @notice Reconciles reserves to actual balances after a controller mint or
-    /// quote-asset reinvestment. Only the gradient controller may invoke it.
     function syncManagedReserves() external onlyGradientController nonReentrant active {
         uint256 b0 = IERC20ManagedPool(token0).balanceOf(address(this));
         uint256 b1 = IERC20ManagedPool(token1).balanceOf(address(this));
@@ -204,6 +203,7 @@ contract GraphPool {
         external nonReentrant active returns (uint256 netOut)
     {
         if (to == address(0) || amountIn == 0) revert BadConfig();
+        if (executorOnlyAllSwaps && msg.sender != arbExecutor) revert Unauthorized();
         if (zeroToOne && restrictZeroToOne && msg.sender != arbExecutor) revert Unauthorized();
 
         uint256 grossOut;

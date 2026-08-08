@@ -16,6 +16,7 @@ from .core import (
     PolicyDecision,
     TripleMoneyLedger,
 )
+from .gesell import DemurrageAllocation, GesellTransactionPolicy
 from .p2p import DurationFundingBook, FundingTranche, LoanPosition, LoanRequest
 from .productive_credit import (
     ProductiveCapacity,
@@ -30,9 +31,11 @@ __all__ = [
     "AssetPosition",
     "BalanceSheet",
     "Constitution",
+    "DemurrageAllocation",
     "DurationFundingBook",
     "FinancialSnapshot",
     "FundingTranche",
+    "GesellTransactionPolicy",
     "LiabilityPosition",
     "LoanPosition",
     "LoanRequest",

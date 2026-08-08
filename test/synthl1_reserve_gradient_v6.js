@@ -75,6 +75,11 @@ describe("SynthL1 V6 supply-neutral reserve gradient", function () {
       await (await pool.setArbExecutor(await executor.getAddress(), true)).wait();
       await (await pool.setExecutorOnlyAllSwaps(true)).wait();
       await (await accounting.addProtocolUSDxPoolAccount(await pool.getAddress())).wait();
+
+      // Production invariant: every managed gradient pool must be visible to the
+      // executor's HardNAV-turnover uncertainty accounting before activation.
+      await (await executor.setVenue(await pool.getAddress(), await pool.getAddress(), true)).wait();
+      await (await executor.setProtocolTarget(await pool.getAddress(), true)).wait();
     }
     await (await accounting.addProtocolUSDxAccount(await capture.getAddress())).wait();
 
@@ -99,9 +104,7 @@ describe("SynthL1 V6 supply-neutral reserve gradient", function () {
     assert.equal(await source.reserve0(), E(60));
     assert.equal(await destination.reserve0(), E(140));
 
-    for (const pool of [source, destination, external]) {
-      await (await executor.setVenue(await pool.getAddress(), await pool.getAddress(), true)).wait();
-    }
+    await (await executor.setVenue(await external.getAddress(), await external.getAddress(), true)).wait();
     for (const pool of [source, destination]) {
       await (await executor.setBaseTokenGate(await pool.getAddress(), true)).wait();
       await (await executor.setAllowedBaseToken(await pool.getAddress(), await tokenB.getAddress(), true)).wait();

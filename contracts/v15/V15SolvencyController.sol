@@ -20,8 +20,8 @@ interface IV15RiskOracleView {
     function scenarioInfo(uint256 id) external view returns (bytes32, uint16 liabilityStressBps, uint256 fixedCost1e18, bool enabled);
 }
 
-/// @notice Stateful V15 solvency brain with hysteresis.
-/// Economic HardNAV is read from V15EconomicLedger; this contract only applies
+/// @notice Stateful V15 solvency brain with hysteresis and independent emergency stop.
+/// Economic HardNAV is read from V15EconomicLedger; this contract applies only
 /// conservative risk marks/haircuts to decide which action classes are admissible.
 contract V15SolvencyController {
     enum Mode { GREEN, YELLOW, ORANGE, RED }
@@ -42,15 +42,13 @@ contract V15SolvencyController {
     }
 
     struct PortfolioLimits {
-        /// @dev Absolute base-risk-asset floor. Ratios alone are insufficient for
-        /// a tiny balance sheet. Zero disables this optional policy limit.
         uint256 minRiskAssets1e18;
-        /// @dev Largest single hard asset as a share of base risk assets.
-        /// 10_000 disables the concentration cap; governance can tighten later.
         uint16 maxSingleAssetConcentrationBps;
     }
 
     address public owner;
+    address public guardian;
+    bool public emergencyPaused;
     IV15LedgerView public immutable ledger;
     IV15LiabilityRiskView public immutable liabilities;
     IV15RiskOracleView public immutable riskOracle;
@@ -63,6 +61,8 @@ contract V15SolvencyController {
     event ThresholdsSet(bytes32 indexed configHash);
     event PortfolioLimitsSet(uint256 minRiskAssets1e18, uint16 maxSingleAssetConcentrationBps);
     event MinHardNAVSet(int256 value);
+    event GuardianSet(address indexed guardian);
+    event EmergencyPaused(bool paused);
 
     error Unauthorized();
     error BadConfig();
@@ -72,6 +72,7 @@ contract V15SolvencyController {
             revert BadConfig();
         }
         owner = owner_;
+        guardian = owner_;
         ledger = IV15LedgerView(ledger_);
         liabilities = IV15LiabilityRiskView(liabilities_);
         riskOracle = IV15RiskOracleView(riskOracle_);
@@ -89,12 +90,27 @@ contract V15SolvencyController {
             distributionCoverageBps: 13_000,
             distributionSTSBps: 13_000
         });
-        // Backwards-compatible defaults. Production governance should set an
-        // absolute capital floor and a stricter concentration cap before launch.
         portfolioLimits = PortfolioLimits(0, 10_000);
     }
 
     modifier onlyOwner() { if (msg.sender != owner) revert Unauthorized(); _; }
+
+    function setGuardian(address next) external onlyOwner {
+        if (next == address(0)) revert BadConfig();
+        guardian = next;
+        emit GuardianSet(next);
+    }
+
+    /// @notice Guardian may stop immediately. Only timelocked owner may restart.
+    function setEmergencyPaused(bool value) external {
+        if (value) {
+            if (msg.sender != guardian && msg.sender != owner) revert Unauthorized();
+        } else {
+            if (msg.sender != owner) revert Unauthorized();
+        }
+        emergencyPaused = value;
+        emit EmergencyPaused(value);
+    }
 
     function setMinHardNAV1e18(int256 value) external onlyOwner {
         minHardNAV1e18 = value;
@@ -215,9 +231,8 @@ contract V15SolvencyController {
         return true;
     }
 
-    /// @notice Survival solvency. ORANGE may satisfy this, because ORANGE is the
-    /// state in which unwind/restore is still possible. Do not use this function
-    /// as permission to execute a new searcher exploitation.
+    /// @notice Survival solvency. ORANGE may satisfy this because ORANGE is the
+    /// state in which unwind/restore is still possible.
     function routeSolvent() public view returns (bool) {
         (int256 nav, uint256 riskAssets,, uint256 k, uint256 s) = metrics();
         if (nav < minHardNAV1e18 || mode == Mode.RED || !_portfolioLimitsSatisfied(riskAssets)) return false;
@@ -227,10 +242,10 @@ contract V15SolvencyController {
         return k >= t.orangeCoverageBps && s >= t.orangeSTSBps;
     }
 
-    /// @notice New V13.1 searcher exploitation is permitted only in GREEN/YELLOW.
-    /// V15PostRouteGate uses this stricter function, closing the ORANGE direct-call bypass.
+    /// @notice New V13.1 searcher exploitation is permitted only in GREEN/YELLOW
+    /// and while independent guardian emergency stop is clear.
     function searcherRouteAllowed() public view returns (bool) {
-        return (mode == Mode.GREEN || mode == Mode.YELLOW) && routeSolvent();
+        return !emergencyPaused && (mode == Mode.GREEN || mode == Mode.YELLOW) && routeSolvent();
     }
 
     function canExpand() external view returns (bool) {
@@ -238,12 +253,14 @@ contract V15SolvencyController {
     }
 
     function maxGradientShiftBps() external view returns (uint16) {
+        if (emergencyPaused) return 0;
         if (mode == Mode.GREEN) return thresholds.greenGradientShiftBps;
         if (mode == Mode.YELLOW) return thresholds.yellowGradientShiftBps;
         return 0;
     }
 
     function distributionAllowed() external view returns (bool) {
+        if (emergencyPaused) return false;
         (int256 nav, uint256 riskAssets,, uint256 k, uint256 s) = metrics();
         return mode == Mode.GREEN && nav >= minHardNAV1e18 &&
             _portfolioLimitsSatisfied(riskAssets) &&
@@ -263,8 +280,6 @@ contract V15SolvencyController {
         ) {
             next = Mode.RED;
         } else if (concentration > p.maxSingleAssetConcentrationBps) {
-            // Concentration is a portfolio-quality breach, not necessarily insolvency.
-            // Move to ORANGE: no new expansion, but unwind/restore remains available.
             next = Mode.ORANGE;
         } else if (old == Mode.RED) {
             next = (k >= uint256(t.orangeCoverageBps) + t.yellowReentryBufferBps &&

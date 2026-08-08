@@ -1,4 +1,4 @@
-name: SynthL1 V5 CI
+name: SynthL1 V6 CI
 
 on:
   push:
@@ -7,8 +7,10 @@ on:
   pull_request:
     paths:
       - 'contracts/synthl1/**'
+      - 'contracts/test/MockERC20V6.sol'
       - 'simulation/synthl1/**'
-      - 'tests/test_synthl1_recursive_qe_mev.py'
+      - 'tests/test_synthl1_*.py'
+      - 'test/synthl1_reserve_gradient_v6.js'
       - 'hardhat.config.js'
       - 'package.json'
       - 'package-lock.json'
@@ -17,7 +19,7 @@ on:
 jobs:
   compile-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,11 +41,17 @@ jobs:
       - name: Compile Solidity
         run: npm run compile
 
-      - name: Run SynthL1 economic unit tests
+      - name: Run V6 atomic EVM gradient test
+        run: npm run test:synthl1:evm
+
+      - name: Run SynthL1 Python invariant tests
         run: npm run test:synthl1
 
       - name: Run full Python test suite
         run: npm test
 
-      - name: Run SynthL1 reference simulation
-        run: npm run sim:synthl1
+      - name: Run supply-neutral gradient simulation
+        run: npm run sim:synthl1:gradient
+
+      - name: Run V13-style stateful graph audit
+        run: npm run sim:synthl1:v13

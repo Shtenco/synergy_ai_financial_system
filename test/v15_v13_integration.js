@@ -23,6 +23,7 @@ async function fixture(bHaircutBps = 10000) {
   const usdx = await deploy("USDx", owner.address);
   const capture = await deploy("MEVCaptureReinvestor", owner.address);
   const oracle = await deploy("PriceOracleHub", owner.address);
+  const validationOracle = await deploy("PriceOracleHub", owner.address);
   const liabilities = await deploy("V15LiabilityRegistry", owner.address);
   const ledger = await deploy("V15EconomicLedger", owner.address, await oracle.getAddress(), await liabilities.getAddress());
   const risk = await deploy("V15RiskOracle", owner.address, await oracle.getAddress());
@@ -100,12 +101,25 @@ async function fixture(bHaircutBps = 10000) {
   await (await adapter.setSyntheticProtocolAccount(await capture.getAddress(), true)).wait();
   await (await executor.setVenue(await external.getAddress(), await external.getAddress(), true)).wait();
 
-  await (await oracle.updatePrices(
-    [await tokenA.getAddress(), await tokenB.getAddress()],
-    [E(1), E(1)]
-  )).wait();
+  const hardTokens = [await tokenA.getAddress(), await tokenB.getAddress()];
+  await (await oracle.updatePrices(hardTokens, [E(1), E(1)])).wait();
+  await (await validationOracle.updatePrices(hardTokens, [E(1), E(1)])).wait();
   await (await ledger.permanentlyExcludeAsset(await usdx.getAddress())).wait();
+
+  // Monetary engine registration is deliberately impossible while Economic NAV
+  // still depends on only one canonical feed.
+  await mustRevert(
+    adapter.setGradientEngine(await engine.getAddress(), true),
+    "gradient engine must require frozen independent Economic validation oracle"
+  );
+  await (await ledger.setValidationOracle(await validationOracle.getAddress(), true)).wait();
+  assert.equal(await ledger.oracleValidationReady(), true);
+  await mustRevert(
+    ledger.setValidationOracle(await oracle.getAddress(), false),
+    "validation oracle freeze must be irreversible"
+  );
   await (await adapter.setGradientEngine(await engine.getAddress(), true)).wait();
+
   await (await ledger.addHardAsset(await tokenA.getAddress())).wait();
   await (await ledger.addHardAsset(await tokenB.getAddress())).wait();
   await (await ledger.setHardAccount(await tokenA.getAddress(), await source.getAddress(), true)).wait();
@@ -134,8 +148,9 @@ async function fixture(bHaircutBps = 10000) {
   )).wait();
 
   return {
-    owner, solver, tokenA, tokenB, usdx, capture, ledger, risk, liabilities, liabilityId,
-    controller, adapter, coordinator, source, destination, external, engine, executor
+    owner, solver, tokenA, tokenB, usdx, capture, oracle, validationOracle, ledger, risk,
+    liabilities, liabilityId, controller, adapter, coordinator, source, destination,
+    external, engine, executor
   };
 }
 
@@ -182,6 +197,14 @@ async function execute(ctx, principal = E("39.8")) {
 describe("V15 overlay over frozen V13.1", function () {
   this.timeout(120000);
 
+  it("uses the lower of independent Economic feeds so one feed cannot inflate NAV", async function () {
+    const c = await fixture(10000);
+    const before = await c.ledger.hardNAV1e18();
+    await (await c.oracle.updatePrice(await c.tokenA.getAddress(), E(2))).wait();
+    assert.equal(await c.ledger.canonicalPrice1e18(await c.tokenA.getAddress()), E(1));
+    assert.equal(await c.ledger.hardNAV1e18(), before, "one high feed must not inflate Economic NAV");
+  });
+
   it("accepts the known latent-basis V13.1 route when Economic HardNAV and K/STS both pass", async function () {
     const c = await fixture(10000);
     const navBefore = await c.ledger.hardNAV1e18();
@@ -210,10 +233,9 @@ describe("V15 overlay over frozen V13.1", function () {
 
   it("blocks new direct searcher exploitation once mode falls to ORANGE", async function () {
     const c = await fixture(10000);
-    // Coverage 200/180 = 111.1%: survival is ORANGE, but no new searcher risk is allowed.
     await (await c.liabilities.setManualAmount(c.liabilityId, E(180))).wait();
-    await (await c.controller.pokeMode()).wait(); // GREEN -> YELLOW
-    await (await c.controller.pokeMode()).wait(); // YELLOW -> ORANGE
+    await (await c.controller.pokeMode()).wait();
+    await (await c.controller.pokeMode()).wait();
     assert.equal(await c.controller.mode(), 2n);
     assert.equal(await c.controller.routeSolvent(), true, "ORANGE should retain survival/restore ability");
     assert.equal(await c.controller.searcherRouteAllowed(), false);
@@ -226,14 +248,11 @@ describe("V15 overlay over frozen V13.1", function () {
     assert.ok((await c.source.reserve0()) > E(60), "exploitation must displace synthetic into source");
     assert.ok((await c.destination.reserve0()) < E(140), "exploitation must remove synthetic from destination");
 
-    // Push coverage below the 105% survival floor. New routes must stop.
     await (await c.liabilities.setManualAmount(c.liabilityId, E(195))).wait();
     await (await c.controller.pokeMode()).wait();
     assert.equal(await c.controller.mode(), 3n, "shock must force RED");
     assert.equal(await c.controller.searcherRouteAllowed(), false);
 
-    // Registered active engine receives the narrowly-scoped compatibility bypass
-    // only for frozen restoreGradient()'s coverage read.
     await (await c.coordinator.restoreGradient(await c.engine.getAddress())).wait();
     assert.equal(await c.source.reserve0(), E(60));
     assert.equal(await c.destination.reserve0(), E(140));

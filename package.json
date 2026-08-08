@@ -1,13 +1,14 @@
 {
   "name": "shtenco-qe-bridge-ai",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "type": "commonjs",
   "scripts": {
     "compile": "hardhat compile",
     "test": "python -m unittest discover -s tests -v",
-    "test:synthl1": "python -m unittest tests.test_synthl1_recursive_qe_mev tests.test_synthl1_economic_audit tests.test_synthl1_system_audit_v52 -v",
+    "test:synthl1": "python -m unittest tests.test_synthl1_recursive_qe_mev tests.test_synthl1_economic_audit tests.test_synthl1_system_audit_v52 tests.test_synthl1_reserve_gradient_v6 -v",
     "sim:synthl1": "python simulation/synthl1/recursive_qe_mev.py",
+    "sim:synthl1:gradient": "python simulation/synthl1/reserve_gradient_v6.py",
     "audit:synthl1": "python simulation/synthl1/economic_audit.py",
     "audit:synthl1:v52": "python simulation/synthl1/system_audit_v52.py",
     "fork:preflight": "hardhat run scripts/fork_preflight.js --network hardhat",

@@ -43,6 +43,12 @@ class SynthL1RecursiveQEMEVTests(unittest.TestCase):
         self.assertLess(len(rows), 30)
         self.assertEqual(rows[-1].tax_usdx, 0.0)
 
+    def test_external_principal_cap_is_binding(self):
+        unlimited = mod.run(seed=80.0, capture_share=0.99, cycles=1)
+        capped = mod.run(seed=80.0, capture_share=0.99, cycles=1, external_principal_cap_usdx=1.0)
+        self.assertLessEqual(capped[0].searcher_principal_usdx, 1.0 + 1e-12)
+        self.assertLess(capped[0].tax_usdx, unlimited[0].tax_usdx)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,14 @@ interface IV15RiskCanonicalOracle {
     function price1e18(address token) external view returns (uint256);
 }
 
+interface IV15ValidatedRiskAnchor is IV15RiskCanonicalOracle {
+    function oracleValidationReady() external view returns (bool);
+}
+
 /// @notice Conservative risk marks and finite stress scenarios for V15.
+/// Bootstrap risk reads may use the constructor oracle, but monetary expansion
+/// must be gated by validatedAnchorReady() in V15SolvencyController. Once frozen,
+/// the anchor is immutable and is expected to be V15EconomicLedger itself.
 contract V15RiskOracle {
     struct RiskData {
         uint192 twap1e18;
@@ -27,6 +34,8 @@ contract V15RiskOracle {
     uint256 public constant MAX_SCENARIOS = 16;
     address public owner;
     address public immutable canonicalOracle;
+    address public validatedCanonicalAnchor;
+    bool public validatedCanonicalAnchorFrozen;
     mapping(address => bool) public reporter;
     mapping(address => RiskData) public riskData;
     Scenario[] private scenarios;
@@ -36,6 +45,7 @@ contract V15RiskOracle {
     event ReporterSet(address indexed reporter, bool allowed);
     event RiskDataSet(address indexed token, uint256 twap1e18, uint256 exit1e18);
     event HaircutSet(address indexed token, uint16 haircutBps);
+    event ValidatedCanonicalAnchorSet(address indexed anchor, bool frozen);
     event ScenarioAdded(uint256 indexed id, bytes32 indexed name, uint16 liabilityStressBps, uint256 fixedCost1e18);
     event ScenarioSet(uint256 indexed id, uint16 liabilityStressBps, uint256 fixedCost1e18, bool enabled);
     event ScenarioAssetSet(uint256 indexed id, address indexed token, uint16 priceStressBps, uint16 liquidityBps);
@@ -43,7 +53,9 @@ contract V15RiskOracle {
 
     error Unauthorized();
     error BadConfig();
+    error Frozen();
     error StaleRiskData(address token);
+    error InvalidValidatedAnchor();
 
     constructor(address owner_, address canonicalOracle_) {
         if (owner_ == address(0) || canonicalOracle_ == address(0)) revert BadConfig();
@@ -67,6 +79,39 @@ contract V15RiskOracle {
         emit MaxAgeSet(age);
     }
 
+    /// @notice One-way anchor to independently validated Economic marks.
+    /// Recommended anchor: V15EconomicLedger after its validation oracle is frozen.
+    function setValidatedCanonicalAnchor(address anchor, bool freeze) external onlyOwner {
+        if (validatedCanonicalAnchorFrozen) revert Frozen();
+        if (anchor == address(0) || anchor.code.length == 0) revert BadConfig();
+        bool ready;
+        try IV15ValidatedRiskAnchor(anchor).oracleValidationReady() returns (bool ok) {
+            ready = ok;
+        } catch {
+            revert InvalidValidatedAnchor();
+        }
+        if (!ready) revert InvalidValidatedAnchor();
+        validatedCanonicalAnchor = anchor;
+        if (freeze) validatedCanonicalAnchorFrozen = true;
+        emit ValidatedCanonicalAnchorSet(anchor, validatedCanonicalAnchorFrozen);
+    }
+
+    function validatedAnchorReady() public view returns (bool) {
+        address anchor = validatedCanonicalAnchor;
+        if (anchor == address(0) || !validatedCanonicalAnchorFrozen) return false;
+        try IV15ValidatedRiskAnchor(anchor).oracleValidationReady() returns (bool ready) {
+            return ready;
+        } catch {
+            return false;
+        }
+    }
+
+    function _canonicalPrice1e18(address token) internal view returns (uint256) {
+        address anchor = validatedCanonicalAnchor;
+        if (anchor != address(0)) return IV15RiskCanonicalOracle(anchor).price1e18(token);
+        return IV15RiskCanonicalOracle(canonicalOracle).price1e18(token);
+    }
+
     function setHaircut(address token, uint16 haircutBps) external onlyOwner {
         if (token == address(0) || haircutBps == 0 || haircutBps > 10_000) revert BadConfig();
         riskData[token].haircutBps = haircutBps;
@@ -88,7 +133,7 @@ contract V15RiskOracle {
     function riskPrice1e18(address token) public view returns (uint256) {
         RiskData memory r = riskData[token];
         if (r.updatedAt == 0 || block.timestamp > uint256(r.updatedAt) + maxAge) revert StaleRiskData(token);
-        uint256 canonical = IV15RiskCanonicalOracle(canonicalOracle).price1e18(token);
+        uint256 canonical = _canonicalPrice1e18(token);
         uint256 p = canonical < uint256(r.twap1e18) ? canonical : uint256(r.twap1e18);
         return p < uint256(r.exit1e18) ? p : uint256(r.exit1e18);
     }

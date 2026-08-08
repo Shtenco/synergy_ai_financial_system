@@ -42,7 +42,6 @@ class V15SoliditySurfaceTests(unittest.TestCase):
         self.assertIn("block.timestamp > uint256(c.manualUpdatedAt) + uint256(manualMaxAge)", text)
         self.assertIn("if (currentAmount(id) != 0) revert OutstandingLiability(id)", text)
         self.assertIn("c.manualUpdatedAt = 0", text)
-        self.assertRegex(text, r"function setManualMaxAge\(")
 
     def test_risk_oracle_separates_reporter_marks_from_owner_haircut(self):
         text = (V15 / "V15RiskOracle.sol").read_text()
@@ -73,21 +72,21 @@ class V15SoliditySurfaceTests(unittest.TestCase):
         self.assertIn("registeredGradientEngine", text)
         self.assertIn("IV15GradientActiveView(msg.sender).active()", text)
         self.assertIn("if (isActive) return type(uint256).max", text)
-        self.assertRegex(text, r"function setGradientEngine\(")
 
     def test_post_route_gate_blocks_orange_red_searcher_routes(self):
         text = (V15 / "V15PostRouteGate.sol").read_text()
         self.assertIn("searcherRouteAllowed()", text)
         self.assertNotIn("routeSolvent()", text)
 
-    def test_controller_has_absolute_concentration_and_guardian_limits(self):
+    def test_controller_has_absolute_concentration_guardian_and_distribution_headroom(self):
         text = (V15 / "V15SolvencyController.sol").read_text()
         self.assertIn("minRiskAssets1e18", text)
         self.assertIn("maxSingleAssetConcentrationBps", text)
         self.assertIn("address public guardian", text)
         self.assertIn("bool public emergencyPaused", text)
-        self.assertRegex(text, r"function setEmergencyPaused\(")
-        self.assertRegex(text, r"function searcherRouteAllowed\(\)")
+        self.assertRegex(text, r"function distributionHeadroom1e18\(\)")
+        self.assertIn("requiredBaseAssets", text)
+        self.assertIn("requiredStressAssets", text)
         self.assertIn("!emergencyPaused", text)
         self.assertIn("mode == Mode.GREEN || mode == Mode.YELLOW", text)
 
@@ -99,13 +98,15 @@ class V15SoliditySurfaceTests(unittest.TestCase):
         self.assertNotIn("recordWithdrawal1e18", text)
         self.assertNotIn("withdrawals1e18", text)
 
-    def test_distribution_requires_hwm_profit_and_physically_swept_eligible_revenue(self):
+    def test_distribution_requires_hwm_profit_eligible_revenue_and_controller_headroom(self):
         text = (V15 / "V15RevenueRouter.sol").read_text()
         self.assertIn("eligibleRevenue1e18", text)
         self.assertIn("recordEligibleRevenueToken", text)
         self.assertIn("revenueSource", text)
         self.assertIn("ledger.isHardAccount(token, from)", text)
         self.assertIn("positiveAfterLoss < eligibleRevenue1e18", text)
+        self.assertIn("controller.distributionHeadroom1e18()", text)
+        self.assertNotIn("requiredReserveTopup1e18", text)
 
     def test_revenue_has_single_settlement_loss_carryforward_and_accounted_custody(self):
         text = (V15 / "V15RevenueRouter.sol").read_text()

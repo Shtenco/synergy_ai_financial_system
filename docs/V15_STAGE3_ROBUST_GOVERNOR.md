@@ -50,6 +50,16 @@ In a real emergency, coverage can fall below the frozen engine's normal floor, y
 
 This preserves a critical invariant: **risk deterioration can never trap the protocol inside a synthetic reserve displacement**.
 
+### 2.3 Capital-flow reporter cannot manufacture distributable profit
+
+The old Stage-2 router accepted numeric contribution/withdrawal records. A fictitious withdrawal add-back could inflate operating PnL.
+
+Stage 3 removes arbitrary withdrawal add-back from distributable-profit accounting.
+
+External contributions are recognized only when a hard token is physically transferred into `V15RevenueRouter`, the router is itself a registered hard account, and the actual received balance delta is valued by `V15EconomicLedger`.
+
+This makes the distribution PnL boundary materially harder to spoof.
+
 ## 3. Absolute capital and concentration limits
 
 Ratios can lie by scale. A system with 200% coverage on one dollar of capital is not institutionally equivalent to a system with 200% coverage on one million dollars.
@@ -144,7 +154,11 @@ Therefore the V15 coordinator must treat gradient size as a control variable, ne
 
 ## 8. 10,000-candidate Monte Carlo governor sanity test
 
-A local Stage-3 randomized stress run generated 10,000 synthetic candidate actions under:
+Reproducible harness:
+
+`simulation/v15/governor_stress.py`
+
+Seed `42`, 10,000 synthetic candidate actions, with:
 
 - minimum risk assets = 50;
 - maximum single-asset concentration = 80%;
@@ -153,10 +167,17 @@ A local Stage-3 randomized stress run generated 10,000 synthetic candidate actio
 
 Result:
 
-- accepted: 410;
+- generated: 10,000;
+- accepted: **399**;
 - accepted candidates violating any configured hard constraint: **0**.
 
-Dominant rejection reasons were absolute-capital floor, coverage floor, concentration, STS, then robust-gain floor.
+Rejections:
+
+- absolute-risk-capital floor: 3,147;
+- coverage floor: 2,408;
+- concentration limit: 2,225;
+- STS floor: 1,240;
+- robust-gain floor: 581.
 
 This is a controller sanity test, not evidence of market profitability.
 
@@ -178,7 +199,29 @@ By contrast:
 
 is an internal hard-asset transfer and is HardNAV-neutral.
 
-## 10. Stage-3 go/no-go rule for 10x50 optimizer
+## 10. Retained capital vs external distribution
+
+Stage 3 separates:
+
+- **retained allocation**: reserve, insurance, operating capital, internal reinvestment;
+- **external distribution**: holder/project/founder payout or own-token buyback.
+
+Only the second reduces consolidated Economic HardNAV.
+
+Reference allocator:
+
+`simulation/v15/capital_allocator.py`
+
+The conservative external-distribution headroom is bounded by the minimum of:
+
+- realized profit after loss carry-forward;
+- base coverage headroom;
+- worst STS headroom;
+- absolute risk-capital headroom.
+
+Post-transfer concentration remains a separate controller gate.
+
+## 11. Stage-3 go/no-go rule for 10x50 optimizer
 
 The full `2 synthetics x 5 internal pools + 50 external pools` optimizer remains behind these gates:
 

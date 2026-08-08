@@ -1,0 +1,49 @@
+name: SynthL1 V5 CI
+
+on:
+  push:
+    branches:
+      - synthl1-recursive-qe-mev-v5
+  pull_request:
+    paths:
+      - 'contracts/synthl1/**'
+      - 'simulation/synthl1/**'
+      - 'tests/test_synthl1_recursive_qe_mev.py'
+      - 'hardhat.config.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/synthl1-v5-ci.yml'
+
+jobs:
+  compile-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile Solidity
+        run: npm run compile
+
+      - name: Run SynthL1 economic unit tests
+        run: npm run test:synthl1
+
+      - name: Run full Python test suite
+        run: npm test
+
+      - name: Run SynthL1 reference simulation
+        run: npm run sim:synthl1

@@ -39,7 +39,6 @@ describe("SynthL1 V6 supply-neutral reserve gradient", function () {
     const destination = await deploy(
       "GraphPool", await usdx.getAddress(), await tokenB.getAddress(), await capture.getAddress(), owner.address
     );
-    // Test-only stand-in for an independently owned external A/B venue.
     const external = await deploy(
       "GraphPool", await tokenA.getAddress(), await tokenB.getAddress(), await capture.getAddress(), owner.address
     );
@@ -73,6 +72,8 @@ describe("SynthL1 V6 supply-neutral reserve gradient", function () {
     for (const pool of [source, destination]) {
       await (await pool.setLiquidityManager(owner.address, true)).wait();
       await (await pool.setGradientController(await engine.getAddress())).wait();
+      await (await pool.setArbExecutor(await executor.getAddress(), true)).wait();
+      await (await pool.setExecutorOnlyAllSwaps(true)).wait();
       await (await accounting.addProtocolUSDxPoolAccount(await pool.getAddress())).wait();
     }
     await (await accounting.addProtocolUSDxAccount(await capture.getAddress())).wait();
@@ -82,7 +83,6 @@ describe("SynthL1 V6 supply-neutral reserve gradient", function () {
     )).wait();
     await (await accounting.addHardAsset(await tokenA.getAddress(), 10000)).wait();
     await (await accounting.addHardAsset(await tokenB.getAddress(), 10000)).wait();
-    // Only protocol-owned accounts are registered. The external pool is deliberately excluded.
     await (await accounting.addHardAccount(await tokenA.getAddress(), await source.getAddress())).wait();
     await (await accounting.addHardAccount(await tokenB.getAddress(), await destination.getAddress())).wait();
     await (await accounting.addHardAccount(await tokenB.getAddress(), await capture.getAddress())).wait();
@@ -98,8 +98,6 @@ describe("SynthL1 V6 supply-neutral reserve gradient", function () {
     assert.equal(await usdx.totalSupply(), supply0);
     assert.equal(await source.reserve0(), E(60));
     assert.equal(await destination.reserve0(), E(140));
-
-    await (await source.setArbExecutor(await executor.getAddress(), true)).wait();
 
     for (const pool of [source, destination, external]) {
       await (await executor.setVenue(await pool.getAddress(), await pool.getAddress(), true)).wait();

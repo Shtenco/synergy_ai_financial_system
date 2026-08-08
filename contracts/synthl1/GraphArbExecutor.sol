@@ -11,30 +11,32 @@ interface ICaptureGraphExec {
     function checkpoint(address token, uint256 amount) external;
 }
 
-/// @notice SystemAccounting-compatible post-trade HardNAV guard.
-/// The transient executor itself MUST NOT be a registered protocol hard account.
 interface IProtocolNAVAccounting {
     function consolidatedHardNAV1e18() external view returns (int256);
     function isHardAccount(address token, address account) external view returns (bool);
     function isProtocolUSDxAccount(address account) external view returns (bool);
+    function isHardAsset(address token) external view returns (bool);
+    function markValue1e18(address token, uint256 amount) external view returns (uint256);
 }
 
 /// @notice Public atomic graph router for external searchers / MEV cycles.
 /// Searchers supply their own principal. Protocol tax is charged only on
 /// REALIZED base-token profit after all route legs, never on principal.
 ///
-/// V13 safety addition:
-/// an optional SystemAccounting post-trade guard snapshots protocol HardNAV before
-/// the route and requires the actually executed route to increase it by at least
-/// `minProtocolNavGain1e18`. This is deliberately a POST-EXECUTION atomic check:
-/// the protocol may self-initiate a reserve gradient first; it does not need a
-/// precommitted external edge. If the resulting real-asset transfer is not
-/// accretive under fresh oracle marks, the entire searcher transaction reverts.
+/// V13.1 safety:
+/// - optional SystemAccounting post-trade HardNAV gate;
+/// - protocol-owned internal venues are explicitly marked;
+/// - absolute real-asset turnover through those venues is marked in USD;
+/// - a configured oracle-error bound is multiplied by that turnover and added to
+///   the minimum required NAV gain. This implements the conservative condition:
+///
+///   measuredGain >= baseMinGain + sum(|delta hard asset| * price * errorBound).
 contract GraphArbExecutor {
     using SafeTransferLib for address;
 
     uint256 public constant MAX_LEGS = 10;
     uint16 public constant MAX_PROFIT_TAX_BPS = 9_900;
+    uint16 public constant MAX_ORACLE_ERROR_BPS = 1_000;
 
     address public owner;
     address public immutable capture;
@@ -44,6 +46,7 @@ contract GraphArbExecutor {
 
     mapping(address => bool) public allowedTarget;
     mapping(address => address) public spenderForTarget;
+    mapping(address => bool) public protocolTarget;
 
     mapping(address => address) public requiredBaseTokenForTarget;
     mapping(address => bool) public baseTokenGateEnabled;
@@ -53,6 +56,7 @@ contract GraphArbExecutor {
     address public navAccounting;
     bool public enforceProtocolNAV;
     uint256 public minProtocolNavGain1e18;
+    uint16 public maxOracleErrorBps;
 
     struct Leg {
         address target;
@@ -65,17 +69,22 @@ contract GraphArbExecutor {
     }
 
     event VenueSet(address indexed target, address indexed spender, bool allowed);
+    event ProtocolTargetSet(address indexed target, bool protocolOwned);
     event RequiredBaseTokenSet(address indexed target, address indexed baseToken);
     event BaseTokenGateSet(address indexed target, bool enabled);
     event AllowedBaseTokenSet(address indexed target, address indexed baseToken, bool allowed);
     event ProfitTaxSet(uint16 bps);
     event MinSearcherRewardSet(address indexed baseToken, uint256 amount);
     event ProtocolNAVGuardSet(address indexed accounting, bool enabled, uint256 minGain1e18);
+    event MaxOracleErrorSet(uint16 bps);
     event ProtocolNAVChecked(
         address indexed searcher,
         int256 navBefore1e18,
         int256 navAfter1e18,
-        int256 navGain1e18
+        int256 navGain1e18,
+        uint256 hardTurnover1e18,
+        uint256 uncertaintyBuffer1e18,
+        uint256 requiredGain1e18
     );
     event Cycle(
         address indexed searcher,
@@ -117,8 +126,15 @@ contract GraphArbExecutor {
         if (!allowed) {
             requiredBaseTokenForTarget[target] = address(0);
             baseTokenGateEnabled[target] = false;
+            protocolTarget[target] = false;
         }
         emit VenueSet(target, spender, allowed);
+    }
+
+    function setProtocolTarget(address target, bool protocolOwned) external onlyOwner {
+        if (!allowedTarget[target]) revert VenueNotAllowed();
+        protocolTarget[target] = protocolOwned;
+        emit ProtocolTargetSet(target, protocolOwned);
     }
 
     function setRequiredBaseToken(address target, address baseToken) external onlyOwner {
@@ -151,10 +167,6 @@ contract GraphArbExecutor {
         emit MinSearcherRewardSet(baseToken, amount);
     }
 
-    /// @notice Enables/disables the atomic post-trade HardNAV gate.
-    /// `accounting` is expected to be SystemAccounting. When enabled, this
-    /// executor must not itself be registered as a hard-asset or protocol USDx
-    /// account; otherwise transient solver balances would contaminate NAV.
     function setProtocolNAVGuard(address accounting, bool enabled, uint256 minGain1e18) external onlyOwner {
         if (enabled && accounting == address(0)) revert BadRoute();
         if (minGain1e18 > uint256(type(int256).max)) revert BadRoute();
@@ -162,6 +174,12 @@ contract GraphArbExecutor {
         enforceProtocolNAV = enabled;
         minProtocolNavGain1e18 = minGain1e18;
         emit ProtocolNAVGuardSet(accounting, enabled, minGain1e18);
+    }
+
+    function setMaxOracleErrorBps(uint16 bps) external onlyOwner {
+        if (bps > MAX_ORACLE_ERROR_BPS) revert BadRoute();
+        maxOracleErrorBps = bps;
+        emit MaxOracleErrorSet(bps);
     }
 
     function setPaused(bool value) external onlyOwner { paused = value; }
@@ -181,6 +199,7 @@ contract GraphArbExecutor {
         if (legs[0].tokenIn != baseToken || legs[n-1].tokenOut != baseToken) revert BadRoute();
 
         int256 navBefore;
+        uint256 hardTurnover1e18;
         IProtocolNAVAccounting accounting;
         if (enforceProtocolNAV) {
             accounting = IProtocolNAVAccounting(navAccounting);
@@ -196,8 +215,6 @@ contract GraphArbExecutor {
 
         for (uint256 i = 0; i < n; ++i) {
             Leg calldata leg = legs[i];
-            // Full-output chaining prevents hidden intermediate inventory/dust from
-            // being stranded on this intentionally unaccounted transient executor.
             if (
                 leg.tokenIn != expected || leg.tokenIn == leg.tokenOut ||
                 leg.amountIn == 0 || leg.amountIn != available
@@ -226,6 +243,15 @@ contract GraphArbExecutor {
             uint256 received = afterOut > beforeOut ? afterOut - beforeOut : 0;
             if (received < leg.minAmountOut) revert InsufficientOutput();
 
+            if (enforceProtocolNAV && protocolTarget[leg.target]) {
+                if (accounting.isHardAsset(leg.tokenIn)) {
+                    hardTurnover1e18 += accounting.markValue1e18(leg.tokenIn, leg.amountIn);
+                }
+                if (accounting.isHardAsset(leg.tokenOut)) {
+                    hardTurnover1e18 += accounting.markValue1e18(leg.tokenOut, received);
+                }
+            }
+
             expected = leg.tokenOut;
             available = received;
         }
@@ -250,13 +276,28 @@ contract GraphArbExecutor {
         if (protocolTax != 0) {
             baseToken.safeTransfer(capture, protocolTax);
             ICaptureGraphExec(capture).checkpoint(baseToken, protocolTax);
+            if (enforceProtocolNAV && accounting.isHardAsset(baseToken)) {
+                hardTurnover1e18 += accounting.markValue1e18(baseToken, protocolTax);
+            }
         }
 
         if (enforceProtocolNAV) {
             int256 navAfter = accounting.consolidatedHardNAV1e18();
             int256 navGain = navAfter - navBefore;
-            if (navGain < int256(minProtocolNavGain1e18)) revert ProtocolNAVNotImproved();
-            emit ProtocolNAVChecked(msg.sender, navBefore, navAfter, navGain);
+            uint256 uncertaintyBuffer1e18 =
+                (hardTurnover1e18 * uint256(maxOracleErrorBps)) / 10_000;
+            uint256 requiredGain1e18 = minProtocolNavGain1e18 + uncertaintyBuffer1e18;
+            if (requiredGain1e18 > uint256(type(int256).max)) revert ProtocolNAVNotImproved();
+            if (navGain < int256(requiredGain1e18)) revert ProtocolNAVNotImproved();
+            emit ProtocolNAVChecked(
+                msg.sender,
+                navBefore,
+                navAfter,
+                navGain,
+                hardTurnover1e18,
+                uncertaintyBuffer1e18,
+                requiredGain1e18
+            );
         }
 
         returned = principal + netProfit;

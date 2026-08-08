@@ -14,12 +14,17 @@ interface IV15RevenueSolvency {
     function distributionAllowed() external view returns (bool);
 }
 
-/// @notice Distributes only capital-flow-adjusted realized HardNAV profit and only
-/// while the post-transfer solvency state remains distribution-safe.
+interface IERC20V15Revenue {
+    function balanceOf(address account) external view returns (uint256);
+}
+
+/// @notice Hard-profit accounting and distribution router.
 ///
-/// Hard tokens distributed by this router MUST be counted by V15EconomicLedger at
-/// this router address. Otherwise a transfer could fail to reduce recorded HardNAV
-/// and the revenue budget would no longer represent economic withdrawals.
+/// External capital contributions are recognized only when hard tokens are
+/// physically transferred into this router and the router is an EconomicLedger
+/// hard account for that token. There is deliberately no arbitrary withdrawal
+/// add-back: a hard withdrawal outside this router is an economic NAV reduction,
+/// not a number a reporter may neutralize by assertion.
 contract V15RevenueRouter {
     using SafeTransferLib for address;
 
@@ -32,15 +37,13 @@ contract V15RevenueRouter {
     bool public periodSettled;
     int256 public periodStartNAV1e18;
     uint256 public contributions1e18;
-    uint256 public withdrawals1e18;
     uint256 public distributableBudget1e18;
     uint256 public distributed1e18;
     uint256 public lossCarryforward1e18;
 
     event CapitalFlowReporterSet(address indexed reporter);
     event PeriodStarted(int256 startNAV1e18);
-    event ContributionRecorded(uint256 value1e18);
-    event WithdrawalRecorded(uint256 value1e18);
+    event ContributionRecorded(address indexed token, address indexed from, uint256 amount, uint256 value1e18);
     event PeriodSettled(
         int256 operatingPnL1e18,
         uint256 lossCarryforwardAfter1e18,
@@ -81,29 +84,37 @@ contract V15RevenueRouter {
         periodSettled = false;
         periodStartNAV1e18 = ledger.hardNAV1e18();
         contributions1e18 = 0;
-        withdrawals1e18 = 0;
         distributableBudget1e18 = 0;
         distributed1e18 = 0;
         emit PeriodStarted(periodStartNAV1e18);
     }
 
-    function recordContribution1e18(uint256 value) external onlyReporter {
-        if (!periodOpen || periodSettled) revert BadConfig();
-        contributions1e18 += value;
-        emit ContributionRecorded(value);
-    }
+    /// @notice Physically receives and values external capital. `from` must
+    /// approve this router. Fee-on-transfer behavior is measured by balance delta.
+    function recordContributionToken(address token, address from, uint256 amount)
+        external onlyReporter returns (uint256 received, uint256 value1e18)
+    {
+        if (!periodOpen || periodSettled || token == address(0) || from == address(0) || amount == 0) revert BadConfig();
+        if (!ledger.isHardAsset(token) || !ledger.isHardAccount(token, address(this))) revert UnaccountedCustody();
 
-    function recordWithdrawal1e18(uint256 value) external onlyReporter {
-        if (!periodOpen || periodSettled) revert BadConfig();
-        withdrawals1e18 += value;
-        emit WithdrawalRecorded(value);
+        uint256 beforeBalance = IERC20V15Revenue(token).balanceOf(address(this));
+        token.safeTransferFrom(from, address(this), amount);
+        uint256 afterBalance = IERC20V15Revenue(token).balanceOf(address(this));
+        if (afterBalance <= beforeBalance) revert BadConfig();
+        received = afterBalance - beforeBalance;
+        value1e18 = ledger.markValue1e18(token, received);
+        contributions1e18 += value1e18;
+        emit ContributionRecorded(token, from, received, value1e18);
     }
 
     function settlePeriod(uint256 requiredReserveTopup1e18) external onlyOwner returns (int256 pnl, uint256 budget) {
         if (!periodOpen || periodSettled || !controller.distributionAllowed()) revert InsolventDistribution();
         int256 nowNav = ledger.hardNAV1e18();
-        if (contributions1e18 > uint256(type(int256).max) || withdrawals1e18 > uint256(type(int256).max)) revert BadConfig();
-        pnl = nowNav - periodStartNAV1e18 - int256(contributions1e18) + int256(withdrawals1e18);
+        if (contributions1e18 > uint256(type(int256).max)) revert BadConfig();
+
+        // No arbitrary withdrawal add-back. Hard distributions are made only
+        // after settlement through distribute(), where they consume budget.
+        pnl = nowNav - periodStartNAV1e18 - int256(contributions1e18);
 
         uint256 positiveAfterLoss;
         if (pnl <= 0) {

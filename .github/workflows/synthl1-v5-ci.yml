@@ -1,4 +1,4 @@
-name: SynthL1 V6 CI
+name: SynthL1 V13 CI
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
       - 'contracts/test/MockERC20V6.sol'
       - 'simulation/synthl1/**'
       - 'tests/test_synthl1_*.py'
-      - 'test/synthl1_reserve_gradient_v6.js'
+      - 'test/synthl1_*.js'
       - 'hardhat.config.js'
       - 'package.json'
       - 'package-lock.json'
@@ -41,7 +41,7 @@ jobs:
       - name: Compile Solidity
         run: npm run compile
 
-      - name: Run V6 atomic EVM gradient test
+      - name: Run SynthL1 atomic EVM tests
         run: npm run test:synthl1:evm
 
       - name: Run SynthL1 Python invariant tests
@@ -53,5 +53,5 @@ jobs:
       - name: Run supply-neutral gradient simulation
         run: npm run sim:synthl1:gradient
 
-      - name: Run V13-style stateful graph audit
+      - name: Run V13.1 stateful HardNAV graph audit
         run: npm run sim:synthl1:v13

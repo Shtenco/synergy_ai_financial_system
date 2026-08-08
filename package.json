@@ -6,7 +6,7 @@
   "scripts": {
     "compile": "hardhat compile",
     "test": "python -m unittest discover -s tests -v",
-    "test:v15": "python -m unittest tests.test_v15_solvency_brain tests.test_v15_solidity_surface tests.test_v15_robust_optimizer tests.test_v15_gradient_frontier tests.test_v15_governor_stress tests.test_v15_capital_allocator -v",
+    "test:v15": "python -m unittest tests.test_v15_solvency_brain tests.test_v15_solidity_surface tests.test_v15_robust_optimizer tests.test_v15_gradient_frontier tests.test_v15_governor_stress tests.test_v15_capital_allocator tests.test_v15_model_risk -v",
     "test:v15:evm": "hardhat test test/v15_overlay.js test/v15_v13_integration.js test/v15_stage3_hardening.js test/v15_guardian.js",
     "test:synthl1": "python -m unittest tests.test_synthl1_recursive_qe_mev tests.test_synthl1_economic_audit tests.test_synthl1_system_audit_v52 tests.test_synthl1_reserve_gradient_v6 tests.test_synthl1_stateful_gradient_graph_v13 tests.test_synthl1_v13_10x50_stress -v",
     "test:synthl1:evm": "hardhat test test/synthl1_reserve_gradient_v6.js test/synthl1_v6_guards.js test/synthl1_v13_nav_guard.js",

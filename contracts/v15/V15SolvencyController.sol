@@ -7,6 +7,8 @@ interface IV15LedgerView {
     function assetAt(uint256) external view returns (address);
     function assetDecimals(address) external view returns (uint8);
     function assetBalance(address) external view returns (uint256);
+    function oracleValidationReady() external view returns (bool);
+    function oracleValidationCoversAllAssets() external view returns (bool);
 }
 
 interface IV15LiabilityRiskView {
@@ -232,6 +234,13 @@ contract V15SolvencyController {
         return true;
     }
 
+    function _economicOracleReady() internal view returns (bool) {
+        if (!ledger.oracleValidationReady()) return false;
+        return ledger.oracleValidationCoversAllAssets();
+    }
+
+    /// @notice Survival solvency. During bootstrap this can still be observed before
+    /// validation-oracle freeze. Permission to expand/distribute is stricter.
     function routeSolvent() public view returns (bool) {
         (int256 nav, uint256 riskAssets,, uint256 k, uint256 s) = metrics();
         if (nav < minHardNAV1e18 || mode == Mode.RED || !_portfolioLimitsSatisfied(riskAssets)) return false;
@@ -241,8 +250,11 @@ contract V15SolvencyController {
         return k >= t.orangeCoverageBps && s >= t.orangeSTSBps;
     }
 
+    /// @notice New V13.1 searcher exploitation is permitted only in GREEN/YELLOW,
+    /// with independent Economic oracle validation frozen and fresh.
     function searcherRouteAllowed() public view returns (bool) {
-        return !emergencyPaused && (mode == Mode.GREEN || mode == Mode.YELLOW) && routeSolvent();
+        return !emergencyPaused && _economicOracleReady() &&
+            (mode == Mode.GREEN || mode == Mode.YELLOW) && routeSolvent();
     }
 
     function canExpand() external view returns (bool) {
@@ -250,7 +262,7 @@ contract V15SolvencyController {
     }
 
     function maxGradientShiftBps() external view returns (uint16) {
-        if (emergencyPaused) return 0;
+        if (emergencyPaused || !_economicOracleReady()) return 0;
         if (mode == Mode.GREEN) return thresholds.greenGradientShiftBps;
         if (mode == Mode.YELLOW) return thresholds.yellowGradientShiftBps;
         return 0;
@@ -260,7 +272,7 @@ contract V15SolvencyController {
     /// while still preserving HardNAV floor, distribution K/STS floors and the
     /// absolute risk-capital floor. Concentration remains a post-transfer gate.
     function distributionHeadroom1e18() public view returns (uint256 headroom) {
-        if (emergencyPaused || mode != Mode.GREEN) return 0;
+        if (emergencyPaused || mode != Mode.GREEN || !_economicOracleReady()) return 0;
         (int256 nav, uint256 riskAssets, uint256 riskLiabilities,,) = metrics();
         if (nav <= minHardNAV1e18 || !_portfolioLimitsSatisfied(riskAssets)) return 0;
 

@@ -23,6 +23,7 @@ from .productive_credit import (
     VerificationPolicy,
     VerifierAttestation,
 )
+from .risk import LossAllocation, LossEvent, LossWaterfall
 from .snapshot import FinancialSnapshot
 
 __all__ = [
@@ -35,6 +36,9 @@ __all__ = [
     "LiabilityPosition",
     "LoanPosition",
     "LoanRequest",
+    "LossAllocation",
+    "LossEvent",
+    "LossWaterfall",
     "MonetaryAction",
     "MonetaryResidual",
     "MonetaryState",

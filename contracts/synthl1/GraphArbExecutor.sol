@@ -45,17 +45,11 @@ contract GraphArbExecutor {
     mapping(address => bool) public allowedTarget;
     mapping(address => address) public spenderForTarget;
 
-    // Optional exact settlement binding for a permanently dedicated venue.
     mapping(address => address) public requiredBaseTokenForTarget;
-
-    // Multi-asset settlement gate for V13-style source/destination combinations.
     mapping(address => bool) public baseTokenGateEnabled;
     mapping(address => mapping(address => bool)) public allowedBaseTokenForTarget;
-
-    // Absolute base-token reward floor left to the solver after tax.
     mapping(address => uint256) public minSearcherReward;
 
-    // Optional atomic protocol HardNAV guard.
     address public navAccounting;
     bool public enforceProtocolNAV;
     uint256 public minProtocolNavGain1e18;
@@ -99,6 +93,7 @@ contract GraphArbExecutor {
     error VenueNotAllowed();
     error ExternalCallFailed();
     error InsufficientOutput();
+    error InputNotConsumed();
     error NotProfitable();
     error WrongSettlementToken();
     error Reentrancy();
@@ -144,7 +139,6 @@ contract GraphArbExecutor {
         emit AllowedBaseTokenSet(target, baseToken, allowed);
     }
 
-    /// @notice Maximum share of realized profit captured by the protocol.
     function setProfitTaxBps(uint16 bps) external onlyOwner {
         if (bps > MAX_PROFIT_TAX_BPS) revert BadRoute();
         profitTaxBps = bps;
@@ -202,7 +196,12 @@ contract GraphArbExecutor {
 
         for (uint256 i = 0; i < n; ++i) {
             Leg calldata leg = legs[i];
-            if (leg.tokenIn != expected || leg.amountIn == 0 || leg.amountIn > available) revert BadRoute();
+            // Full-output chaining prevents hidden intermediate inventory/dust from
+            // being stranded on this intentionally unaccounted transient executor.
+            if (
+                leg.tokenIn != expected || leg.tokenIn == leg.tokenOut ||
+                leg.amountIn == 0 || leg.amountIn != available
+            ) revert BadRoute();
             if (!allowedTarget[leg.target] || spenderForTarget[leg.target] != leg.spender) revert VenueNotAllowed();
 
             address requiredBase = requiredBaseTokenForTarget[leg.target];
@@ -211,14 +210,19 @@ contract GraphArbExecutor {
                 revert WrongSettlementToken();
             }
 
-            leg.tokenIn.forceApprove(leg.spender, leg.amountIn);
+            uint256 beforeIn = IERC20GraphExec(leg.tokenIn).balanceOf(address(this));
             uint256 beforeOut = IERC20GraphExec(leg.tokenOut).balanceOf(address(this));
+            if (beforeIn < leg.amountIn) revert BadRoute();
 
+            leg.tokenIn.forceApprove(leg.spender, leg.amountIn);
             (bool ok,) = leg.target.call(leg.data);
             leg.tokenIn.forceApprove(leg.spender, 0);
             if (!ok) revert ExternalCallFailed();
 
+            uint256 afterIn = IERC20GraphExec(leg.tokenIn).balanceOf(address(this));
             uint256 afterOut = IERC20GraphExec(leg.tokenOut).balanceOf(address(this));
+            if (afterIn > beforeIn || beforeIn - afterIn != leg.amountIn) revert InputNotConsumed();
+
             uint256 received = afterOut > beforeOut ? afterOut - beforeOut : 0;
             if (received < leg.minAmountOut) revert InsufficientOutput();
 

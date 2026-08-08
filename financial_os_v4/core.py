@@ -125,6 +125,21 @@ class MonetaryAction:
 
 
 @dataclass(frozen=True)
+class MonetaryResidual:
+    """RL proposal expressed only as deltas around the deterministic policy."""
+
+    demurrage_rate: float = 0.0
+    term_savings_reward_rate: float = 0.0
+    credit_cap_ratio: float = 0.0
+    productive_qe_ratio: float = 0.0
+    qt_ratio: float = 0.0
+    insurance_target_ratio: float = 0.0
+    reserve_target_ratio: float = 0.0
+    midas_cap_ratio: float = 0.0
+    buyback_profit_share: float = 0.0
+
+
+@dataclass(frozen=True)
 class PolicyBounds:
     demurrage_rate: tuple[float, float] = (0.0, 0.06)
     term_savings_reward_rate: tuple[float, float] = (0.0, 0.15)
@@ -140,7 +155,7 @@ class PolicyBounds:
 @dataclass(frozen=True)
 class PolicyDecision:
     baseline: MonetaryAction
-    rl_residual: MonetaryAction
+    rl_residual: MonetaryResidual
     bounded: MonetaryAction
     mode: str
     invariant_failures: tuple[str, ...] = ()
@@ -153,8 +168,11 @@ def _clip(x: float, bounds: tuple[float, float]) -> float:
     return min(hi, max(lo, x))
 
 
-def _add_actions(a: MonetaryAction, b: MonetaryAction) -> MonetaryAction:
-    values = {f: getattr(a, f) + getattr(b, f) for f in MonetaryAction.__dataclass_fields__}
+def _add_actions(a: MonetaryAction, b: MonetaryResidual) -> MonetaryAction:
+    values = {
+        field_name: getattr(a, field_name) + getattr(b, field_name)
+        for field_name in MonetaryAction.__dataclass_fields__
+    }
     return MonetaryAction(**values)
 
 
@@ -201,7 +219,10 @@ class Constitution:
     def _bound(self, action: MonetaryAction) -> MonetaryAction:
         values = {}
         for field_name in MonetaryAction.__dataclass_fields__:
-            values[field_name] = _clip(getattr(action, field_name), getattr(self.bounds, field_name))
+            values[field_name] = _clip(
+                getattr(action, field_name),
+                getattr(self.bounds, field_name),
+            )
         return MonetaryAction(**values)
 
     def invariant_failures(
@@ -235,17 +256,11 @@ class Constitution:
     def decide(
         self,
         state: MonetaryState,
-        rl_residual: MonetaryAction | None = None,
+        rl_residual: MonetaryResidual | None = None,
         **invariant_inputs: float,
     ) -> PolicyDecision:
         baseline = self._bound(self.baseline_policy(state))
-        residual = rl_residual or MonetaryAction(
-            credit_cap_ratio=0.0,
-            insurance_target_ratio=0.0,
-            reserve_target_ratio=0.0,
-            midas_cap_ratio=0.0,
-            buyback_profit_share=0.0,
-        )
+        residual = rl_residual or MonetaryResidual()
         bounded = self._bound(_add_actions(baseline, residual))
         failures = self.invariant_failures(state, **invariant_inputs)
 
@@ -263,7 +278,10 @@ class Constitution:
                 insurance_target_ratio=max(bounded.insurance_target_ratio, 0.20),
             )
             mode = "EMERGENCY"
-        elif state.liquidity_coverage_ratio < 2.0 or state.nonperforming_loan_ratio > 0.08:
+        elif (
+            state.liquidity_coverage_ratio < 2.0
+            or state.nonperforming_loan_ratio > 0.08
+        ):
             bounded = replace(
                 bounded,
                 midas_cap_ratio=min(bounded.midas_cap_ratio, 0.05),
@@ -308,7 +326,9 @@ class TripleMoneyLedger:
 
     def mint_synt_backed(self, amount: float, hard_backing_received: float) -> None:
         if amount <= 0 or hard_backing_received + EPS < amount:
-            raise ValueError("SYNT mint must be fully hard-backed at par in this reference core")
+            raise ValueError(
+                "SYNT mint must be fully hard-backed at par in this reference core"
+            )
         self.synt_money_units += amount
         self.hard_reserve_value += hard_backing_received
         self.reserve_basket_value += hard_backing_received
@@ -323,7 +343,11 @@ class TripleMoneyLedger:
         self.reserve_basket_value -= amount
         return amount
 
-    def allocate_realized_profit(self, profit: float, waterfall: Mapping[str, float]) -> dict[str, float]:
+    def allocate_realized_profit(
+        self,
+        profit: float,
+        waterfall: Mapping[str, float],
+    ) -> dict[str, float]:
         if profit < -EPS:
             raise ValueError("profit cannot be negative")
         if abs(sum(waterfall.values()) - 1.0) > 1e-8:

@@ -8,6 +8,17 @@ from typing import Iterable, Mapping
 EPS = 1e-9
 
 
+def _require_finite(value: float, name: str) -> None:
+    if not isfinite(value):
+        raise ValueError(f"{name} must be finite")
+
+
+def _require_nonnegative(value: float, name: str) -> None:
+    _require_finite(value, name)
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative")
+
+
 class TokenRole(str, Enum):
     CAPITAL = "SYNA"
     RESERVE = "SYNR"
@@ -16,11 +27,10 @@ class TokenRole(str, Enum):
 
 @dataclass(frozen=True)
 class AssetPosition:
-    """Externally attributable asset.
+    """Externally attributable asset with three explicit valuation haircuts.
 
-    `hard_haircut` is deliberately explicit. An internally issued SINERGY token
-    should normally use a hard haircut of 0.0 because its own market cap is not
-    external redeemable backing.
+    An internally issued SINERGY token should normally use a hard haircut of
+    0.0 because its own market cap is not external redeemable backing.
     """
 
     name: str
@@ -30,12 +40,18 @@ class AssetPosition:
     economic_haircut: float = 1.0
 
     def __post_init__(self) -> None:
-        if self.value < -EPS:
-            raise ValueError("asset value cannot be negative")
+        if not self.name.strip():
+            raise ValueError("asset name is required")
+        _require_nonnegative(self.value, "asset value")
         for field_name in ("hard_haircut", "liquid_haircut", "economic_haircut"):
-            h = getattr(self, field_name)
-            if not 0.0 <= h <= 1.0:
-                raise ValueError(f"{field_name} must be in [0, 1]")
+            haircut = getattr(self, field_name)
+            _require_finite(haircut, field_name)
+            if not 0.0 <= haircut <= 1.0:
+                raise ValueError(f"{field_name} must be in [0,1]")
+        if self.hard_haircut > self.liquid_haircut + EPS:
+            raise ValueError("hard_haircut cannot exceed liquid_haircut")
+        if self.liquid_haircut > self.economic_haircut + EPS:
+            raise ValueError("liquid_haircut cannot exceed economic_haircut")
 
 
 @dataclass(frozen=True)
@@ -45,8 +61,11 @@ class LiabilityPosition:
     seniority: int = 0
 
     def __post_init__(self) -> None:
-        if self.value < -EPS:
-            raise ValueError("liability value cannot be negative")
+        if not self.name.strip():
+            raise ValueError("liability name is required")
+        _require_nonnegative(self.value, "liability value")
+        if self.seniority < 0:
+            raise ValueError("seniority cannot be negative")
 
 
 @dataclass
@@ -54,6 +73,9 @@ class BalanceSheet:
     assets: list[AssetPosition] = field(default_factory=list)
     liabilities: list[LiabilityPosition] = field(default_factory=list)
     net_new_capital: float = 0.0
+
+    def __post_init__(self) -> None:
+        _require_finite(self.net_new_capital, "net_new_capital")
 
     @staticmethod
     def _asset_value(assets: Iterable[AssetPosition], haircut_attr: str) -> float:
@@ -88,12 +110,9 @@ class BalanceSheet:
         return self.economic_assets - self.liabilities_total
 
     def distributable_profit(self, previous_hard_nav: float) -> float:
-        """Profit after excluding capital contributed by users/investors.
+        """HardNAV increase after excluding net contributed capital."""
 
-        This is the accounting guard against treating deposits, internal minting,
-        self-token price changes or virtual liquidity as profit.
-        """
-
+        _require_finite(previous_hard_nav, "previous_hard_nav")
         return max(0.0, self.hard_nav - previous_hard_nav - self.net_new_capital)
 
 
@@ -109,6 +128,19 @@ class MonetaryState:
     reserve_coverage_ratio: float
     upcoming_unlock_ratio_8w: float
     external_pnl_ratio: float
+
+    def __post_init__(self) -> None:
+        for field_name in self.__dataclass_fields__:
+            _require_finite(getattr(self, field_name), field_name)
+        for field_name in (
+            "liquidity_coverage_ratio",
+            "reserve_coverage_ratio",
+            "upcoming_unlock_ratio_8w",
+        ):
+            if getattr(self, field_name) < 0:
+                raise ValueError(f"{field_name} must be non-negative")
+        if not 0 <= self.nonperforming_loan_ratio <= 1:
+            raise ValueError("nonperforming_loan_ratio must be in [0,1]")
 
 
 @dataclass(frozen=True)
@@ -151,6 +183,17 @@ class PolicyBounds:
     midas_cap_ratio: tuple[float, float] = (0.0, 0.15)
     buyback_profit_share: tuple[float, float] = (0.0, 0.10)
 
+    def __post_init__(self) -> None:
+        for field_name in self.__dataclass_fields__:
+            bounds = getattr(self, field_name)
+            if len(bounds) != 2:
+                raise ValueError(f"{field_name} bounds must contain two values")
+            low, high = bounds
+            _require_finite(low, f"{field_name}.low")
+            _require_finite(high, f"{field_name}.high")
+            if low > high:
+                raise ValueError(f"{field_name} lower bound exceeds upper bound")
+
 
 @dataclass(frozen=True)
 class PolicyDecision:
@@ -162,10 +205,9 @@ class PolicyDecision:
 
 
 def _clip(x: float, bounds: tuple[float, float]) -> float:
-    lo, hi = bounds
-    if not isfinite(x):
-        raise ValueError("policy value must be finite")
-    return min(hi, max(lo, x))
+    low, high = bounds
+    _require_finite(x, "policy value")
+    return min(high, max(low, x))
 
 
 def _add_actions(a: MonetaryAction, b: MonetaryResidual) -> MonetaryAction:
@@ -179,7 +221,7 @@ def _add_actions(a: MonetaryAction, b: MonetaryResidual) -> MonetaryAction:
 class Constitution:
     """Hard constraints around a deterministic monetary policy plus bounded RL.
 
-    RL is allowed to recommend *residual* changes. It never gets authority to
+    RL is allowed to recommend residual changes. It never gets authority to
     violate solvency, liquidity, maturity or risk invariants.
     """
 
@@ -192,6 +234,14 @@ class Constitution:
         max_midas_drawdown: float = 0.08,
     ) -> None:
         self.bounds = bounds or PolicyBounds()
+        _require_finite(min_hard_nav_ratio, "min_hard_nav_ratio")
+        _require_nonnegative(min_lcr, "min_lcr")
+        _require_nonnegative(max_npl_ratio, "max_npl_ratio")
+        _require_nonnegative(max_midas_drawdown, "max_midas_drawdown")
+        if max_npl_ratio > 1:
+            raise ValueError("max_npl_ratio cannot exceed 1")
+        if max_midas_drawdown > 1:
+            raise ValueError("max_midas_drawdown cannot exceed 1")
         self.min_hard_nav_ratio = min_hard_nav_ratio
         self.min_lcr = min_lcr
         self.max_npl_ratio = max_npl_ratio
@@ -201,7 +251,7 @@ class Constitution:
         # Taylor-like deterministic anchor plus countercyclical reserve logic.
         overheating = max(0.0, state.inflation - 0.02) + max(0.0, state.output_gap)
         weakness = max(0.0, -state.output_gap) + max(0.0, -state.inflation)
-        stress = max(0.0, 1.5 - state.liquidity_coverage_ratio)
+        stress = max(0.0, self.min_lcr - state.liquidity_coverage_ratio)
         credit_stress = max(0.0, state.nonperforming_loan_ratio - 0.04)
 
         return MonetaryAction(
@@ -235,6 +285,14 @@ class Constitution:
         loan_maturity_weeks: float | None = None,
         funding_maturity_weeks: float | None = None,
     ) -> tuple[str, ...]:
+        _require_nonnegative(midas_drawdown, "midas_drawdown")
+        _require_nonnegative(unbacked_mint, "unbacked_mint")
+        _require_nonnegative(flash_debt_at_commit, "flash_debt_at_commit")
+        if loan_maturity_weeks is not None:
+            _require_nonnegative(loan_maturity_weeks, "loan_maturity_weeks")
+        if funding_maturity_weeks is not None:
+            _require_nonnegative(funding_maturity_weeks, "funding_maturity_weeks")
+
         failures: list[str] = []
         if state.hard_nav_ratio < self.min_hard_nav_ratio - EPS:
             failures.append("HARD_NAV_COVERAGE")
@@ -265,7 +323,6 @@ class Constitution:
         failures = self.invariant_failures(state, **invariant_inputs)
 
         if failures:
-            # Fail-safe policy: do not create new risk while servicing redemptions.
             bounded = replace(
                 bounded,
                 demurrage_rate=0.0,
@@ -308,6 +365,12 @@ class TripleMoneyLedger:
     reserve_basket_value: float = 0.0
     external_liabilities: float = 0.0
 
+    def __post_init__(self) -> None:
+        for field_name in self.__dataclass_fields__:
+            _require_nonnegative(getattr(self, field_name), field_name)
+        if self.hard_reserve_value > self.reserve_basket_value + EPS:
+            raise ValueError("hard reserve cannot exceed total reserve basket value")
+
     def synt_coverage(self) -> float:
         if self.synt_money_units <= EPS:
             return float("inf")
@@ -325,6 +388,8 @@ class TripleMoneyLedger:
         return equity / self.syna_equity_units
 
     def mint_synt_backed(self, amount: float, hard_backing_received: float) -> None:
+        _require_finite(amount, "SYNT mint amount")
+        _require_nonnegative(hard_backing_received, "hard_backing_received")
         if amount <= 0 or hard_backing_received + EPS < amount:
             raise ValueError(
                 "SYNT mint must be fully hard-backed at par in this reference core"
@@ -334,6 +399,7 @@ class TripleMoneyLedger:
         self.reserve_basket_value += hard_backing_received
 
     def redeem_synt(self, amount: float) -> float:
+        _require_finite(amount, "SYNT redemption amount")
         if amount <= 0 or amount > self.synt_money_units + EPS:
             raise ValueError("invalid redemption amount")
         if self.hard_reserve_value + EPS < amount:
@@ -348,8 +414,11 @@ class TripleMoneyLedger:
         profit: float,
         waterfall: Mapping[str, float],
     ) -> dict[str, float]:
-        if profit < -EPS:
-            raise ValueError("profit cannot be negative")
+        _require_nonnegative(profit, "profit")
+        for name, share in waterfall.items():
+            if not str(name).strip():
+                raise ValueError("waterfall destination name is required")
+            _require_nonnegative(share, f"waterfall share {name}")
         if abs(sum(waterfall.values()) - 1.0) > 1e-8:
             raise ValueError("waterfall shares must sum to 1")
         return {name: profit * share for name, share in waterfall.items()}

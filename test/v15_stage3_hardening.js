@@ -16,7 +16,7 @@ async function mustRevert(promise, label) {
   assert.equal(reverted, true, label);
 }
 
-describe("V15 Stage-3 liability hardening", function () {
+describe("V15 Stage-3 accounting/oracle hardening", function () {
   this.timeout(120000);
 
   async function fixture() {
@@ -37,6 +37,41 @@ describe("V15 Stage-3 liability hardening", function () {
     await (await liabilities.addLiability(id, 18, E(1), 10000, ethers.ZeroAddress, E(20))).wait();
     return { owner, usdc, oracle, liabilities, ledger, id };
   }
+
+  it("uses the lower fresh Economic feed and fails closed when the frozen validator becomes stale", async function () {
+    const [owner] = await ethers.getSigners();
+    const usdc = await deploy("MockERC20V6", "USDC", "USDC", 18);
+    const primary = await deploy("PriceOracleHub", owner.address);
+    const validator = await deploy("PriceOracleHub", owner.address);
+    const liabilities = await deploy("V15LiabilityRegistry", owner.address);
+    const ledger = await deploy(
+      "V15EconomicLedger", owner.address, await primary.getAddress(), await liabilities.getAddress()
+    );
+
+    await (await usdc.mint(owner.address, E(100))).wait();
+    await (await primary.updatePrice(await usdc.getAddress(), E(2))).wait();
+    await (await validator.updatePrice(await usdc.getAddress(), E(1))).wait();
+    await (await ledger.addHardAsset(await usdc.getAddress())).wait();
+    await (await ledger.setHardAccount(await usdc.getAddress(), owner.address, true)).wait();
+    await (await ledger.setValidationOracle(await validator.getAddress(), true)).wait();
+
+    assert.equal(await ledger.oracleValidationReady(), true);
+    assert.equal(await ledger.canonicalPrice1e18(await usdc.getAddress()), E(1));
+    assert.equal(await ledger.hardNAV1e18(), E(100));
+    await mustRevert(
+      ledger.setValidationOracle(await primary.getAddress(), false),
+      "frozen validation oracle must be immutable"
+    );
+
+    // Only validator expires; primary remains fresh under its default 60s max age.
+    await (await validator.setMaxAge(1)).wait();
+    await ethers.provider.send("evm_increaseTime", [2]);
+    await ethers.provider.send("evm_mine", []);
+    await mustRevert(
+      ledger.hardNAV1e18(),
+      "stale independent validation feed must fail Economic HardNAV closed"
+    );
+  });
 
   it("fails closed when a manual liability report becomes stale", async function () {
     const c = await fixture();
@@ -68,12 +103,9 @@ describe("V15 Stage-3 liability hardening", function () {
     assert.equal(await c.ledger.hardNAV1e18(), E(100));
 
     await (await c.liabilities.setEnabled(c.id, true)).wait();
-    // Re-enable does not refresh freshness. The old zero report is still current
-    // in this same short test window, so refresh explicitly as production keepers must.
     await (await c.liabilities.setManualAmount(c.id, E(5))).wait();
     assert.equal(await c.ledger.hardNAV1e18(), E(95));
 
-    // Switching source configuration back to manual invalidates the previous report.
     await (await c.liabilities.setSource(c.id, ethers.ZeroAddress)).wait();
     await mustRevert(c.ledger.hardNAV1e18(), "source reset must require a fresh manual liability report");
     await (await c.liabilities.setManualAmount(c.id, E(5))).wait();

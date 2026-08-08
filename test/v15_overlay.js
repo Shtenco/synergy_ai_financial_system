@@ -119,7 +119,7 @@ describe("V15 economic/risk overlay", function () {
     await mustRevert(router.settlePeriod(0), "same period cannot be settled twice");
   });
 
-  it("capital contribution does not masquerade as operating hard profit", async function () {
+  it("physical external capital contribution does not masquerade as operating hard profit", async function () {
     const c = await setup();
     const router = await deploy(
       "V15RevenueRouter",
@@ -130,8 +130,16 @@ describe("V15 economic/risk overlay", function () {
     );
     await (await c.ledger.setHardAccount(await c.usdc.getAddress(), await router.getAddress(), true)).wait();
     await (await router.startPeriod()).wait();
-    await (await c.usdc.mint(await router.getAddress(), E(20))).wait();
-    await (await router.recordContribution1e18(E(20))).wait();
+
+    // outsider is not a protocol hard account. The only way this contribution is
+    // neutralized in PnL is by physically transferring it through the router.
+    await (await c.usdc.mint(c.outsider.address, E(20))).wait();
+    await (await c.usdc.connect(c.outsider).approve(await router.getAddress(), E(20))).wait();
+    await (await router.recordContributionToken(
+      await c.usdc.getAddress(), c.outsider.address, E(20)
+    )).wait();
+
+    assert.equal(await router.contributions1e18(), E(20));
     await (await router.settlePeriod(0)).wait();
     assert.equal(await router.distributableBudget1e18(), 0n);
   });

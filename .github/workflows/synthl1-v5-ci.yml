@@ -55,3 +55,6 @@ jobs:
 
       - name: Run V13.1 stateful HardNAV graph audit
         run: npm run sim:synthl1:v13
+
+      - name: Run V13.1 10-internal 50-external stress sweep
+        run: npm run stress:synthl1:v13

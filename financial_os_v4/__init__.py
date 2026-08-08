@@ -16,14 +16,19 @@ from .core import (
     PolicyDecision,
     TripleMoneyLedger,
 )
+from .p2p import DurationFundingBook, FundingTranche, LoanPosition, LoanRequest
 from .snapshot import FinancialSnapshot
 
 __all__ = [
     "AssetPosition",
     "BalanceSheet",
     "Constitution",
+    "DurationFundingBook",
     "FinancialSnapshot",
+    "FundingTranche",
     "LiabilityPosition",
+    "LoanPosition",
+    "LoanRequest",
     "MonetaryAction",
     "MonetaryResidual",
     "MonetaryState",

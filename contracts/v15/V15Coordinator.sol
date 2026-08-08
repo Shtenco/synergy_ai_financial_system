@@ -86,7 +86,7 @@ contract V15Coordinator {
     }
 
     function reinvestCapturedQuote(address engine, address pool, uint256 amount) external onlyOperator {
-        if (paused || !engineAllowed[engine] || !controller.routeSolvent()) revert RiskBlocked();
+        if (paused || !engineAllowed[engine] || !controller.canExpand()) revert RiskBlocked();
         IV15GradientEngine(engine).reinvestCapturedQuote(pool, amount);
     }
 }

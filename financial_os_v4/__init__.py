@@ -14,9 +14,10 @@ from .core import (
     MonetaryState,
     PolicyBounds,
     PolicyDecision,
-    TripleMoneyLedger,
+    TripleMoneyLedger as LegacyTripleMoneyLedger,
 )
 from .gesell import DemurrageAllocation, GesellTransactionPolicy
+from .money import SegregatedTripleMoneyLedger
 from .p2p import DurationFundingBook, FundingTranche, LoanPosition, LoanRequest
 from .productive_credit import (
     ProductiveCapacity,
@@ -38,6 +39,7 @@ __all__ = [
     "FinancialSnapshot",
     "FundingTranche",
     "GesellTransactionPolicy",
+    "LegacyTripleMoneyLedger",
     "LiabilityPosition",
     "LoanPosition",
     "LoanRequest",
@@ -53,7 +55,7 @@ __all__ = [
     "ProductiveCapacity",
     "ProductiveCreditRequest",
     "RewardWeights",
-    "TripleMoneyLedger",
+    "SegregatedTripleMoneyLedger",
     "VerificationPolicy",
     "VerifierAttestation",
 ]

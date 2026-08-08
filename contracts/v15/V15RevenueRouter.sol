@@ -12,6 +12,7 @@ interface IV15RevenueLedger {
 
 interface IV15RevenueSolvency {
     function distributionAllowed() external view returns (bool);
+    function distributionHeadroom1e18() external view returns (uint256);
 }
 
 interface IERC20V15Revenue {
@@ -19,14 +20,8 @@ interface IERC20V15Revenue {
 }
 
 /// @notice Hard-profit accounting and distribution router.
-///
-/// Two independent conditions are required for external distribution:
-/// 1. consolidated Economic HardNAV created profit above contribution/loss HWM;
-/// 2. an allowlisted protocol hard account physically swept eligible realized
-///    hard revenue into this router during the period.
-///
-/// Therefore a direct owner/donor deposit can increase NAV but cannot by itself
-/// manufacture distributable operating revenue.
+/// Distribution requires BOTH HWM Economic HardNAV profit and physically swept
+/// eligible protocol revenue, then is capped by controller-derived solvency headroom.
 contract V15RevenueRouter {
     using SafeTransferLib for address;
 
@@ -53,8 +48,8 @@ contract V15RevenueRouter {
     event PeriodSettled(
         int256 operatingPnL1e18,
         uint256 eligibleRevenue1e18,
+        uint256 solvencyHeadroom1e18,
         uint256 lossCarryforwardAfter1e18,
-        uint256 reserveTopup1e18,
         uint256 distributable1e18
     );
     event Distributed(address indexed token, address indexed to, uint256 amount, uint256 value1e18);
@@ -86,8 +81,6 @@ contract V15RevenueRouter {
         emit CapitalFlowReporterSet(next);
     }
 
-    /// @notice Revenue source must remain a protocol hard account for the token
-    /// being swept. Typical sources are capture/fee/bridge revenue vaults.
     function setRevenueSource(address source, bool enabled) external onlyOwner {
         if (source == address(0)) revert BadConfig();
         revenueSource[source] = enabled;
@@ -106,8 +99,6 @@ contract V15RevenueRouter {
         emit PeriodStarted(periodStartNAV1e18);
     }
 
-    /// @notice Physically receives and values external capital. `from` must
-    /// approve this router. Fee-on-transfer behavior is measured by balance delta.
     function recordContributionToken(address token, address from, uint256 amount)
         external onlyReporter returns (uint256 received, uint256 value1e18)
     {
@@ -124,9 +115,6 @@ contract V15RevenueRouter {
         emit ContributionRecorded(token, from, received, value1e18);
     }
 
-    /// @notice Sweeps already-protocol-owned realized hard revenue into this router.
-    /// Because both source and router must be EconomicLedger hard accounts, this
-    /// transfer itself is HardNAV-neutral; it only proves revenue eligibility.
     function recordEligibleRevenueToken(address token, address from, uint256 amount)
         external onlyReporter returns (uint256 received, uint256 value1e18)
     {
@@ -148,8 +136,12 @@ contract V15RevenueRouter {
         emit EligibleRevenueRecorded(token, from, received, value1e18);
     }
 
-    function settlePeriod(uint256 requiredReserveTopup1e18) external onlyOwner returns (int256 pnl, uint256 budget) {
-        if (!periodOpen || periodSettled || !controller.distributionAllowed()) revert InsolventDistribution();
+    /// @notice Accounting settlement is always allowed when the ledgers are readable,
+    /// even in RED. Crisis losses must enter loss carry-forward instead of being hidden.
+    /// Distribution budget itself is zero unless the controller reports positive GREEN
+    /// solvency headroom.
+    function settlePeriod() external onlyOwner returns (int256 pnl, uint256 budget) {
+        if (!periodOpen || periodSettled) revert BadConfig();
         int256 nowNav = ledger.hardNAV1e18();
         if (contributions1e18 > uint256(type(int256).max)) revert BadConfig();
 
@@ -169,19 +161,16 @@ contract V15RevenueRouter {
             }
         }
 
-        // Both tests must agree: accounting says profit exists, and physically
-        // swept protocol revenue proves that an eligible hard-revenue source exists.
         uint256 eligibleProfit = positiveAfterLoss < eligibleRevenue1e18
             ? positiveAfterLoss
             : eligibleRevenue1e18;
-        if (eligibleProfit > requiredReserveTopup1e18) {
-            budget = eligibleProfit - requiredReserveTopup1e18;
-        }
+        uint256 solvencyHeadroom = controller.distributionHeadroom1e18();
+        budget = eligibleProfit < solvencyHeadroom ? eligibleProfit : solvencyHeadroom;
 
         distributableBudget1e18 = budget;
         distributed1e18 = 0;
         periodSettled = true;
-        emit PeriodSettled(pnl, eligibleRevenue1e18, lossCarryforward1e18, requiredReserveTopup1e18, budget);
+        emit PeriodSettled(pnl, eligibleRevenue1e18, solvencyHeadroom, lossCarryforward1e18, budget);
     }
 
     function distribute(address token, address to, uint256 amount) external onlyOwner {
@@ -194,7 +183,6 @@ contract V15RevenueRouter {
         distributed1e18 += value;
         token.safeTransfer(to, amount);
 
-        // Post-transfer solvency check. Revert rolls the token transfer back atomically.
         if (!controller.distributionAllowed()) revert InsolventDistribution();
         emit Distributed(token, to, amount, value);
     }

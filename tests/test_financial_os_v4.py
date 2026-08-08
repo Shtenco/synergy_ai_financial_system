@@ -1,0 +1,117 @@
+import unittest
+
+from financial_os_v4.core import (
+    AssetPosition,
+    BalanceSheet,
+    Constitution,
+    LiabilityPosition,
+    MonetaryAction,
+    MonetaryState,
+    TripleMoneyLedger,
+)
+from financial_os_v4.simulation import base_200_participant_scenario
+
+
+class BalanceSheetTests(unittest.TestCase):
+    def test_internal_token_market_cap_is_not_hard_nav(self):
+        sheet = BalanceSheet(
+            assets=[
+                AssetPosition("USDC", 1_000_000),
+                AssetPosition(
+                    "SYNA market cap",
+                    9_000_000,
+                    hard_haircut=0,
+                    liquid_haircut=0,
+                    economic_haircut=0.25,
+                ),
+            ],
+            liabilities=[LiabilityPosition("SYNT", 800_000)],
+        )
+        self.assertEqual(sheet.hard_nav, 200_000)
+        self.assertGreater(sheet.economic_nav, sheet.hard_nav)
+
+    def test_new_capital_is_not_profit(self):
+        sheet = BalanceSheet(
+            assets=[AssetPosition("cash", 1_500_000)],
+            liabilities=[LiabilityPosition("money liabilities", 1_000_000)],
+            net_new_capital=400_000,
+        )
+        self.assertEqual(sheet.distributable_profit(previous_hard_nav=100_000), 0)
+
+
+class TripleMoneyTests(unittest.TestCase):
+    def test_synt_requires_backing_and_burns_on_redemption(self):
+        ledger = TripleMoneyLedger()
+        ledger.mint_synt_backed(100_000, 100_000)
+        self.assertEqual(ledger.synt_coverage(), 1.0)
+        self.assertEqual(ledger.redeem_synt(25_000), 25_000)
+        self.assertEqual(ledger.synt_money_units, 75_000)
+        self.assertEqual(ledger.hard_reserve_value, 75_000)
+
+        with self.assertRaises(ValueError):
+            ledger.mint_synt_backed(100, 99)
+
+
+class PolicyTests(unittest.TestCase):
+    def test_rl_is_bounded(self):
+        state = MonetaryState(
+            inflation=0.03,
+            output_gap=0.01,
+            unemployment_gap=0,
+            velocity_gap=0,
+            hard_nav_ratio=1.2,
+            liquidity_coverage_ratio=2.2,
+            nonperforming_loan_ratio=0.03,
+            reserve_coverage_ratio=1.5,
+            upcoming_unlock_ratio_8w=0.10,
+            external_pnl_ratio=0.02,
+        )
+        c = Constitution()
+        huge_rl = MonetaryAction(
+            demurrage_rate=99,
+            term_savings_reward_rate=99,
+            credit_cap_ratio=99,
+            productive_qe_ratio=99,
+            qt_ratio=99,
+            insurance_target_ratio=99,
+            reserve_target_ratio=99,
+            midas_cap_ratio=99,
+            buyback_profit_share=99,
+        )
+        d = c.decide(state, huge_rl)
+        self.assertLessEqual(d.bounded.demurrage_rate, 0.06)
+        self.assertLessEqual(d.bounded.credit_cap_ratio, 0.60)
+        self.assertLessEqual(d.bounded.midas_cap_ratio, 0.15)
+
+    def test_invariant_failure_forces_emergency(self):
+        state = MonetaryState(
+            inflation=0.02,
+            output_gap=0,
+            unemployment_gap=0,
+            velocity_gap=0,
+            hard_nav_ratio=0.95,
+            liquidity_coverage_ratio=1.2,
+            nonperforming_loan_ratio=0.04,
+            reserve_coverage_ratio=1.0,
+            upcoming_unlock_ratio_8w=0.2,
+            external_pnl_ratio=-0.01,
+        )
+        d = Constitution().decide(state, unbacked_mint=1)
+        self.assertEqual(d.mode, "EMERGENCY")
+        self.assertEqual(d.bounded.credit_cap_ratio, 0)
+        self.assertEqual(d.bounded.midas_cap_ratio, 0)
+        self.assertEqual(d.bounded.buyback_profit_share, 0)
+        self.assertIn("UNBACKED_MINT", d.invariant_failures)
+
+
+class ScenarioTests(unittest.TestCase):
+    def test_200_participant_scenario_is_positive_but_not_magic(self):
+        s = base_200_participant_scenario()
+        self.assertAlmostEqual(s.weekly_savings, 484_615.3846153846)
+        self.assertAlmostEqual(s.contributions, 48_461_538.46153846)
+        self.assertGreater(s.annual_p2p_profit, 0)
+        self.assertTrue(0 < s.saver_yield_on_locked < 0.20)
+
+
+if __name__ == "__main__":
+    unittest.main()

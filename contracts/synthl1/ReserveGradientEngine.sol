@@ -20,6 +20,8 @@ interface IGraphPoolGradient {
     function liquidityManager() external view returns (address);
     function restrictLiquidityProviders() external view returns (bool);
     function gradientController() external view returns (address);
+    function arbExecutor() external view returns (address);
+    function executorOnlyAllSwaps() external view returns (bool);
     function gradientDebitToken0(uint256 amount, address to) external;
     function syncManagedReserves() external;
     function spot1Per0() external view returns (uint256);
@@ -44,7 +46,8 @@ interface IAccountingGradient {
 ///   2. burn it;
 ///   3. mint the exact same amount into destination pool;
 ///   4. searchers exploit the resulting cross-pool/cross-asset gradient through
-///      GraphArbExecutor, which taxes REALIZED arbitrage profit;
+///      GraphArbExecutor, which taxes REALIZED arbitrage profit and can enforce a
+///      post-trade consolidated HardNAV increase;
 ///   5. restore the exact synthetic reserve targets by another equal burn/mint shift;
 ///   6. reinvest physically captured quote assets into selected protocol pools;
 ///   7. exploit the gradient again or rotate it.
@@ -78,9 +81,9 @@ contract ReserveGradientEngine {
     uint256 public lastRestoreShift;
     uint256 public exploitations;
 
-    uint16 public minExternalCoverageBps = 12_000; // 120% when external USDx liabilities exist.
-    uint16 public maxGradientShiftBps = 9_500; // permits very large gradients but cannot drain source to zero.
-    uint256 public maxRestoreDust = 10; // raw USDx units; set according to token precision/integration.
+    uint16 public minExternalCoverageBps = 12_000;
+    uint16 public maxGradientShiftBps = 9_500;
+    uint256 public maxRestoreDust = 10;
 
     event GradientPoolSet(address indexed pool, bool allowed);
     event GradientInitialized(
@@ -118,6 +121,7 @@ contract ReserveGradientEngine {
     error ActiveGradient();
     error NoActiveGradient();
     error PoolNotManaged();
+    error ExecutorMismatch();
     error AccountingNotConfigured();
     error ExternalUSDxUndercovered();
     error GradientTooLarge();
@@ -179,8 +183,6 @@ contract ReserveGradientEngine {
         emit GradientPoolSet(pool, allowed);
     }
 
-    /// @notice Creates the initial edge without changing USDx total supply.
-    /// Only synthetic token0 is moved; neither source nor destination token1 is withdrawn.
     function initializeGradient(address source, address destination, uint256 shift)
         external onlyOperator
     {
@@ -192,6 +194,9 @@ contract ReserveGradientEngine {
 
         _requireManagedPool(source);
         _requireManagedPool(destination);
+        if (IGraphPoolGradient(source).arbExecutor() != IGraphPoolGradient(destination).arbExecutor()) {
+            revert ExecutorMismatch();
+        }
         _requireSolvent();
 
         uint256 sourceBefore = IGraphPoolGradient(source).reserve0();
@@ -230,10 +235,6 @@ contract ReserveGradientEngine {
         );
     }
 
-    /// @notice After one external searcher cycle, the source should contain the
-    /// synthetic amount that was bought out of destination. This function removes
-    /// exactly that excess from source and remints it into destination, preserving
-    /// both the configured target gradient and total supply for another exploitation.
     function restoreGradient() external onlyOperator returns (uint256 restored) {
         if (!active) revert NoActiveGradient();
         _requireSolvent();
@@ -272,8 +273,6 @@ contract ReserveGradientEngine {
         );
     }
 
-    /// @notice Reinvests a physically captured quote token into a selected managed
-    /// pool. This is the recursive MEV-tax feedback path. No synthetic is minted.
     function reinvestCapturedQuote(address pool, uint256 amount) external onlyOperator {
         if (!active) revert NoActiveGradient();
         if (!gradientPool[pool] || amount == 0) revert BadConfig();
@@ -295,8 +294,6 @@ contract ReserveGradientEngine {
         );
     }
 
-    /// @notice Removes the active synthetic gradient and restores the original
-    /// synthetic reserves, again without changing total supply.
     function closeGradient() external onlyOperator {
         if (!active) revert NoActiveGradient();
         _requireReserveNear(IGraphPoolGradient(sourcePool).reserve0(), targetSourceSynthetic);
@@ -337,6 +334,7 @@ contract ReserveGradientEngine {
         if (total == 0 || p.shares(protocolLiquidityOwner) != total) revert PoolNotManaged();
         if (!p.restrictLiquidityProviders() || p.liquidityManager() != protocolLiquidityOwner) revert PoolNotManaged();
         if (p.gradientController() != address(this)) revert PoolNotManaged();
+        if (!p.executorOnlyAllSwaps() || p.arbExecutor() == address(0)) revert PoolNotManaged();
         if (!accounting.isProtocolUSDxPoolAccount(pool)) revert AccountingNotConfigured();
         if (accounting.protocolLiquidityOwner() != protocolLiquidityOwner) revert AccountingNotConfigured();
         if (!accounting.isProtocolUSDxAccount(address(capture))) revert AccountingNotConfigured();

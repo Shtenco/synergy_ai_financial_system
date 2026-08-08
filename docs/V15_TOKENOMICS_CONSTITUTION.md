@@ -82,17 +82,74 @@ V15 treats hard capital in five economic buckets conceptually:
 
 Only bucket 5 may finance tokenholder/project/founder distributions or buyback/burn.
 
-## 5. Operating PnL
+## 5. Operating PnL and physical capital contributions
 
-For period t:
+For performance analytics one may report a capital-flow-adjusted return series. For **distributable-profit accounting**, V15 uses a stricter rule.
 
-`OperatingHardPnL_t = HardNAV_t - HardNAV_(t-1) - Contributions_t + Withdrawals_t`.
+External contributions must be physically transferred through `V15RevenueRouter` into a router balance that is itself registered as a hard account. The router measures the actually received token amount and values it through `V15EconomicLedger`.
 
-A positive period does not become distributable until all historical loss carry-forward is recovered.
+Period distributable PnL therefore begins from:
 
-This creates a high-water-mark-like rule without valuing own tokens.
+`DistributionPnL_t = HardNAV_t - HardNAV_(t-1) - PhysicallyVerifiedContributions_t`.
 
-## 6. Distribution waterfall
+There is deliberately no arbitrary reporter-controlled withdrawal add-back.
+
+A hard withdrawal outside the approved distribution path is a real NAV loss and increases loss carry-forward; it cannot be transformed into accounting profit by reporting a number.
+
+A positive period does not become distributable until historical loss carry-forward is fully recovered.
+
+## 6. Retained allocation and external distribution are different
+
+### 6.1 Retained capital allocation
+
+Examples:
+
+- capture vault -> insurance vault;
+- capture vault -> protocol-owned reserve account;
+- capture vault -> 100%-protocol-owned managed pool;
+- reserve -> execution working-capital account.
+
+These are internal transfers. If every account is consolidated exactly once, they satisfy:
+
+`Delta Economic HardNAV = 0`.
+
+They may alter K/STS/concentration and therefore still require risk checks, but they are not external distributions.
+
+### 6.2 External hard distribution
+
+Examples:
+
+- hard-token holder reward;
+- project payment;
+- founder/DAO payout;
+- own-token buyback from external holders followed by burn.
+
+These send hard value outside the protocol and reduce Economic HardNAV by the hard asset spent.
+
+They therefore consume **distribution headroom**.
+
+## 7. Solvency distribution headroom
+
+A distribution must preserve all capital requirements after the outflow.
+
+Reference capital allocator:
+
+`simulation/v15/capital_allocator.py`
+
+It computes a conservative external-distribution cap from the minimum of:
+
+- base coverage headroom;
+- worst stress-scenario STS headroom;
+- absolute risk-capital headroom;
+- realized profit after historical loss recovery.
+
+Conceptually:
+
+`DistributionCap = min(ProfitAfterLoss, CoverageHeadroom, StressHeadroom, AbsoluteCapitalHeadroom)`.
+
+Post-transfer concentration is a separate hard gate in `V15SolvencyController`.
+
+## 8. Distribution waterfall
 
 The ordering is mandatory:
 
@@ -101,19 +158,20 @@ The ordering is mandatory:
 3. required hard reserve top-up;
 4. insurance/stress buffer;
 5. operating and edge working-capital target;
-6. only then optional distribution.
+6. only then optional external distribution.
 
-Possible downstream allocations from the final residual include:
+Possible external allocations from the final residual include:
 
-- additional reinvestment;
 - SYNA/SYNR buyback/burn;
 - holder rewards;
 - ecosystem/project funding;
 - founder/DAO distributions.
 
+Additional reinvestment is a retained allocation, not an external distribution.
+
 No fixed percentage is constitutional. Percentages must be calibrated from real profitability, stress loss and liquidity data.
 
-## 7. Mode-dependent distribution policy
+## 9. Mode-dependent distribution policy
 
 ### GREEN
 
@@ -131,7 +189,7 @@ No distribution and no new risk expansion. Only restore, hedge, repay and risk r
 
 Emergency only. No distribution, no new gradient, no new QE. Restore/reduce/liability management only.
 
-## 8. Proposed token roles
+## 10. Proposed token roles
 
 These are V15 design roles, not hard-asset accounting claims.
 
@@ -159,7 +217,7 @@ Potential uses:
 
 SYNR is not counted as hard reserve or primary solvency collateral merely because its name contains "Reserve".
 
-## 9. Locking
+## 11. Locking
 
 Locking does not create HardNAV.
 
@@ -167,7 +225,7 @@ Its legitimate economic effect is to reduce the amount of synthetic supply that 
 
 Any lock reward must be an accrued liability until paid and must be funded from distributable hard surplus, not implicit mint value.
 
-## 10. Edge attribution
+## 12. Edge attribution
 
 Every profitable V15 route should report at least three quantities:
 
@@ -177,7 +235,7 @@ Every profitable V15 route should report at least three quantities:
 
 This prevents the protocol from claiming credit for profit that already existed externally.
 
-## 11. Risk-adjusted objective
+## 13. Risk-adjusted objective
 
 Safety is not part of a weighted score; it is a hard admissibility condition.
 
@@ -191,7 +249,7 @@ Only among admissible actions may the optimizer rank by:
 
 The correct output is allowed to be `HOLD`.
 
-## 12. Governance constitution
+## 14. Governance constitution
 
 Production governance should enforce:
 
@@ -200,6 +258,8 @@ Production governance should enforce:
 - no same-block relaxation of a risk parameter and use of the newly relaxed capacity;
 - explicit registration of every liability source and hard-asset account;
 - immutable exclusion of own synthetics from Economic HardAssets;
+- all external capital contributions through the physically verified contribution path;
+- all discretionary hard outflows through the revenue/distribution path;
 - staged rollout from tiny capital before scale-up.
 
 ## Bottom line

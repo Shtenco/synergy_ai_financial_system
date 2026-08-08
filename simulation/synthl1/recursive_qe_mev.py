@@ -5,13 +5,15 @@ Exact loop:
   initial QE USDx -> CORE buyback+burn -> graph wedge -> taxed searcher arb ->
   protocol USDx realized-profit tax -> tax reinvested into next buyback+burn -> repeat.
 
-The model intentionally separates recycled tax turnover from hard economic profit.
+The model intentionally separates recycled tax turnover from hard economic profit
+and explicitly caps the external USDx principal available to the searcher.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import List, Tuple
 import copy
+import math
 
 FEE = 0.003
 Pool = Tuple[float, float]  # CORE, USDx
@@ -47,22 +49,28 @@ def best_profit_tax_arb(
     profit_tax_share: float,
     searcher_gas_usdx: float = 0.0,
     min_searcher_reward_usdx: float = 0.0,
+    external_principal_cap_usdx: float = math.inf,
 ):
     """Searcher-optimal route under a proportional tax on REALIZED profit.
 
     A constant tax on `grossProfit = returned - principal` scales profit but does
-    not change the gross-profit-maximizing trade size. The route executes only
-    when the searcher's retained reward covers gas plus the configured reward floor.
+    not change the gross-profit-maximizing trade size unless external principal
+    availability itself is binding. The route executes only when the searcher's
+    retained reward covers gas plus the configured reward floor.
     """
     if not (0.0 <= profit_tax_share < 1.0):
         raise ValueError("profit_tax_share must be in [0,1)")
+    if external_principal_cap_usdx < 0:
+        raise ValueError("external_principal_cap_usdx must be non-negative")
 
     prices = [price(p) for p in pools]
     buy = min(range(len(pools)), key=lambda i: prices[i])
     sell = max(range(len(pools)), key=lambda i: prices[i])
-    max_usdx = pools[buy][1] * 0.70
-    best = None
+    max_usdx = min(pools[buy][1] * 0.70, external_principal_cap_usdx)
+    if max_usdx <= 0:
+        return pools, 0.0, 0.0, 0.0, 0.0, 0.0
 
+    best = None
     for i in range(1, 4001):
         q = max_usdx * i / 4000
         _, core = usdx_to_core(pools[buy], q)
@@ -74,7 +82,7 @@ def best_profit_tax_arb(
             best = (gross, q)
 
     if best is None:
-        return pools, 0.0, 0.0, 0.0, 0.0
+        return pools, 0.0, 0.0, 0.0, 0.0, 0.0
 
     gross, q = best
     protocol_tax = profit_tax_share * gross
@@ -82,7 +90,7 @@ def best_profit_tax_arb(
     searcher_net_after_gas = searcher_reward - searcher_gas_usdx
 
     if searcher_net_after_gas < min_searcher_reward_usdx or searcher_net_after_gas <= 0:
-        return pools, 0.0, 0.0, gross, searcher_net_after_gas
+        return pools, 0.0, 0.0, gross, searcher_net_after_gas, q
 
     next_pools = copy.deepcopy(pools)
     next_pools[buy], core = usdx_to_core(next_pools[buy], q)
@@ -91,7 +99,7 @@ def best_profit_tax_arb(
     protocol_tax = profit_tax_share * gross
     searcher_reward = (1.0 - profit_tax_share) * gross
     searcher_net_after_gas = searcher_reward - searcher_gas_usdx
-    return next_pools, protocol_tax, searcher_reward, gross, searcher_net_after_gas
+    return next_pools, protocol_tax, searcher_reward, gross, searcher_net_after_gas, q
 
 
 @dataclass
@@ -99,6 +107,7 @@ class Cycle:
     number: int
     pulse_usdx: float
     pre_wedge_pct: float
+    searcher_principal_usdx: float
     tax_usdx: float
     searcher_reward_usdx: float
     searcher_net_after_gas_usdx: float
@@ -116,6 +125,7 @@ def run(
     external_topup: float = 0.0,
     searcher_gas_usdx: float = 0.0,
     min_searcher_reward_usdx: float = 0.0,
+    external_principal_cap_usdx: float = math.inf,
 ) -> List[Cycle]:
     pools: List[Pool] = [(reserve, reserve) for _ in range(pools_n)]
     amount = seed
@@ -128,17 +138,19 @@ def run(
         pools, core_burned = pulse(pools, n % pools_n, amount)
         prices = [price(p) for p in pools]
         wedge = (max(prices) / min(prices) - 1.0) * 100.0
-        pools, tax, reward, gross, net_after_gas = best_profit_tax_arb(
+        pools, tax, reward, gross, net_after_gas, principal = best_profit_tax_arb(
             pools,
             capture_share,
             searcher_gas_usdx=searcher_gas_usdx,
             min_searcher_reward_usdx=min_searcher_reward_usdx,
+            external_principal_cap_usdx=external_principal_cap_usdx,
         )
         searcher_cumulative += reward
         rows.append(Cycle(
             number=n + 1,
             pulse_usdx=amount,
             pre_wedge_pct=wedge,
+            searcher_principal_usdx=principal,
             tax_usdx=tax,
             searcher_reward_usdx=reward,
             searcher_net_after_gas_usdx=net_after_gas,
@@ -161,6 +173,8 @@ def summary(rows: List[Cycle], seed: float) -> dict:
         "seed": seed,
         "cycles": len(rows),
         "initial_wedge_pct": rows[0].pre_wedge_pct,
+        "first_searcher_principal": rows[0].searcher_principal_usdx,
+        "max_searcher_principal": max(r.searcher_principal_usdx for r in rows),
         "first_tax": rows[0].tax_usdx,
         "first_recycle_efficiency_pct": rows[0].tax_usdx / seed * 100.0,
         "cumulative_recycled_tax": sum(r.tax_usdx for r in rows),
@@ -178,7 +192,8 @@ def main() -> None:
         print(
             f"seed={seed:7.2f}  cycles={s['cycles']:2d}  "
             f"wedge={s['initial_wedge_pct']:9.2f}%  "
-            f"first_tax={s['first_tax']:10.6f}  "
+            f"firstPrincipal={s['first_searcher_principal']:10.6f}  "
+            f"firstTax={s['first_tax']:10.6f}  "
             f"recycled={s['cumulative_recycled_tax']:10.6f}  "
             f"burned={s['cumulative_core_burned']:10.6f}  "
             f"hardNAV={s['final_hard_nav_delta']:+.6f}"

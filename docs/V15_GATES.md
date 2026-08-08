@@ -1,84 +1,150 @@
 # V15 Mandatory Gates
 
-V15 remains a draft overlay until every gate below passes.
+V15 remains a draft overlay. The full 10×50 optimizer stays disconnected until every execution gate below is green.
 
-## G0 — Frozen-base integrity
+## G0 — Frozen-base integrity — PASS
 
 - merge base is exactly V13.1 freeze commit `385eaa2e6c811f1f29c504984484d9223b42b1b7`;
-- no frozen `contracts/synthl1/*` production source is modified by V15 Stage 2.
+- branch comparison is ahead-only (`behind=0`);
+- no frozen `contracts/synthl1/*` production source is modified by the V15 overlay.
 
-## G1 — Mathematical/reference invariants
+Verified again after the current hardening pass.
+
+## G1 — Mathematical/reference invariants — IMPLEMENTED
+
+Required invariants:
 
 - Economic HardNAV excludes own synthetics;
 - Economic HardNAV and RiskNAV/K/STS are separate;
 - supply-neutral gradient invariant;
-- conservation identity;
+- protocol + external LP + solver conservation identity;
 - capital-flow-adjusted PnL;
+- robust/maximin candidate selection;
+- absolute risk-capital and concentration limits;
 - HOLD when no safe action exists;
-- RED/ORANGE defensive behavior.
+- RED/ORANGE defensive behavior;
+- winner's-curse/model-risk penalty before large graph search;
+- recapitalization is capital contribution, not revenue.
 
-Current local result: **12/12 PASS**.
+`npm run test:v15` now discovers every `tests/test_v15_*.py` file instead of maintaining a fragile hand-written list.
 
-## G2 — Solidity surface/integration invariants
+Reference suites passed in prior local runs. The current GitHub head still requires a clean rerun once an execution environment is available.
 
-- exactly 8 V15 overlay contracts;
-- EconomicLedger contains no haircut valuation;
-- own synthetics can be permanently excluded;
-- RiskOracle reporter cannot change governance haircuts;
-- AccountingAdapter implements both frozen V13.1 accounting interfaces;
-- post-route K/STS gate is fail closed;
-- restore/close remain emergency-callable;
-- revenue has single settlement and loss carry-forward;
-- no frozen V13.1 contract logic is imported into V15 overlay, except shared `SafeTransferLib`.
+## G2 — Solidity surface / fail-closed wiring — IMPLEMENTED, EXECUTION PENDING
 
-Current local result: **9/9 PASS**.
+Production overlay remains exactly 8 top-level V15 contracts.
 
-Combined local Python/static result: **21/21 PASS**.
+Current hardening includes:
 
-## G3 — Solidity compiler
+- `V15EconomicLedger`: own-synthetic exclusion; lower-of-two Economic oracle; one-way validation freeze; `price1e18()` validated-anchor ABI;
+- `V15LiabilityRegistry`: generic liabilities; stale manual liabilities fail closed; outstanding liabilities cannot be disabled;
+- `V15RiskOracle`: TWAP/exit/haircut risk marks plus one-way frozen validated canonical anchor;
+- `V15SolvencyController`: K/STS, absolute risk-assets floor, concentration limit, GREEN/YELLOW/ORANGE/RED, guardian stop;
+- `V15PostRouteGate`: frozen V13.1 searcher route allowed only in GREEN/YELLOW and only when the controller permits expansion;
+- `V15AccountingAdapter`: frozen V13.1 compatibility plus validated-accounting registration gate;
+- `V15Coordinator`: new gradient/reinvestment only under expansion permission; restore/close remain emergency-callable;
+- `V15RevenueRouter`: physical revenue evidence, HWM/loss carry-forward, capital-flow adjustment and solvency-limited distribution.
+
+## G3 — Solidity compiler — INFRA-BLOCKED
+
+Command:
 
 `npm ci && npm run compile`
 
 Required result: zero Solidity compile errors.
 
-Current local status: **NOT EXECUTED**. The sandbox has no `solc`/`forge`, and its restricted npm registry returns 404 for `solc@0.8.26`.
+Current local environment has no `solc`, `forge`, `hardhat`, Docker or Podman, and its restricted npm registry does not provide `solc@0.8.26`.
 
-## G4 — V15 EVM overlay tests
+Latest GitHub Actions `V15 Overlay CI` run creates the job but the runner never starts: the job reports `steps=null`. Therefore the GitHub red status is **not a compiler result**.
+
+Do not mark G3 PASS or FAIL until an actual compiler process runs.
+
+## G4 — V15 EVM overlay — TESTS CURRENT, EXECUTION INFRA-BLOCKED
+
+Command:
 
 `npm run test:v15:evm`
 
-Must prove:
+Current gate suite intentionally contains only current-API tests:
 
-1. canonical Economic HardNAV remains distinct from K/STS risk accounting;
-2. liability shock makes adapter fail closed;
-3. contribution cannot become operating revenue;
-4. revenue distribution cannot exceed settled hard PnL;
-5. prior losses must be recovered before later PnL is distributable;
-6. known V13.1 latent-basis route passes through V15 when HardNAV and post-route K/STS pass;
-7. the same Economic-HardNAV-positive route reverts atomically when post-route K/STS breaches the active mode floor.
+1. `test/v15_stage3_hardening.js`
+   - lower-of-two Economic feed;
+   - stale Economic validator fail-closed;
+   - stale liability fail-closed;
+   - outstanding liability cannot disappear.
+2. `test/v15_guardian.js`
+   - guardian can stop immediately;
+   - guardian cannot restart;
+   - validated Economic + validated Risk anchor wiring.
+3. `test/v15_revenue_evidence.js`
+   - physically evidenced hard revenue;
+   - raw donation is not revenue;
+   - capital contribution is not revenue;
+   - prior loss must be recovered before distribution.
+4. `test/v15_v13_integration.js`
+   - frozen V13.1 latent-basis route through V15;
+   - Economic HardNAV + post-route K/STS gate;
+   - ORANGE blocks new searcher exploitation;
+   - RED restores and closes an already-active gradient;
+   - RiskOracle is frozen on the validated Economic ledger.
 
-Current status: **tests implemented, execution pending compiler/runtime**.
+The stale pre-evidence `test/v15_overlay.js` was removed from the branch rather than kept as dead legacy.
 
-## G5 — Frozen V13.1 regression
+## G5 — Frozen V13.1 EVM regression — EXECUTION INFRA-BLOCKED
+
+Command:
 
 `npm run test:synthl1:evm`
 
-V15 must not break the frozen V13.1 EVM guards.
+V15 may not progress if any frozen V13.1 EVM guard regresses.
 
-## G6 — Fork gate
+The workflow is wired, but the current GitHub runner also fails before its first step.
 
-After G0-G5 are green:
+## G6 — Emergency execution sub-gates — TESTED IN CODE, EXECUTION PENDING
 
-- pinned Polygon archival fork;
-- current real venue contracts;
-- no private keys in source/logs;
-- oracle freshness / depeg / stale-data scenarios;
-- bridge unavailable scenario;
-- gas spike / solver reward floor;
-- owner/capture/pool/accounting balance reconciliation.
+Must execute successfully before fork testing:
 
-## G7 — 10×50 optimizer
+- RED: no new searcher exploitation;
+- RED: exact `restoreGradient()` remains callable;
+- RED: `closeGradient()` remains callable;
+- guardian: emergency stop works immediately;
+- guardian: cannot unpause/restart risk;
+- validated RiskOracle anchor is frozen and cannot silently fall back during monetary expansion.
 
-Only after G0-G6 pass may the full `2 synthetics × 5 internal pools + 50 external venues` optimizer be connected.
+## G7 — Polygon archival fork — LOCKED UNTIL G3-G6
 
-The optimizer is not allowed to bypass V15 Economic HardNAV, K/STS, oracle uncertainty, liability completeness or supply-partition postconditions.
+Required:
+
+- pinned Polygon archival block;
+- current real venue contracts and token addresses;
+- external quote/oracle freshness checks;
+- depeg and stale-data scenarios;
+- bridge-unavailable scenario if bridge path is enabled;
+- realistic gas + solver reservation floor;
+- owner/capture/pool/accounting reconciliation;
+- no private keys or secrets in source/logs.
+
+No archival fork result is claimed yet.
+
+## G8 — Full 10×50 optimizer — HARD LOCK
+
+Only after G0-G7 are genuinely green may the full:
+
+`2 synthetics × 5 internal pools + 50 external venues`
+
+optimizer be connected to execution.
+
+The optimizer must never bypass:
+
+- Economic HardNAV;
+- generic liabilities;
+- validated Economic + Risk oracle anchors;
+- K/STS;
+- absolute risk-capital floor;
+- asset/cluster concentration policy;
+- drawdown budget;
+- model/selection uncertainty;
+- solver reservation economics;
+- supply-neutrality and exact-restore postconditions.
+
+**No compile/EVM/fork evidence = no 10×50 execution.**

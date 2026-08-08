@@ -50,6 +50,13 @@ class V15SoliditySurfaceTests(unittest.TestCase):
         self.assertRegex(text, r"address public immutable protocolLiquidityOwner")
         self.assertIn("gate.assertRouteState();", text)
 
+    def test_active_registered_gradient_can_restore_even_if_coverage_is_below_normal_floor(self):
+        text = (V15 / "V15AccountingAdapter.sol").read_text()
+        self.assertIn("registeredGradientEngine", text)
+        self.assertIn("IV15GradientActiveView(msg.sender).active()", text)
+        self.assertIn("if (isActive) return type(uint256).max", text)
+        self.assertRegex(text, r"function setGradientEngine\(")
+
     def test_post_route_gate_blocks_orange_red_searcher_routes(self):
         text = (V15 / "V15PostRouteGate.sol").read_text()
         self.assertIn("searcherRouteAllowed()", text)

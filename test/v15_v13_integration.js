@@ -111,7 +111,9 @@ async function fixture(bHaircutBps = 10000) {
     "gradient engine must require frozen independent Economic validation oracle"
   );
   await (await ledger.setValidationOracle(await validationOracle.getAddress(), true)).wait();
+  await (await risk.setValidatedCanonicalAnchor(await ledger.getAddress(), true)).wait();
   assert.equal(await ledger.oracleValidationReady(), true);
+  assert.equal(await risk.validatedAnchorReady(), true);
   await mustRevert(
     adapter.setGradientEngine(await engine.getAddress(), true),
     "validator-ready but empty hard-asset ledger must still be non-activatable"
@@ -145,6 +147,7 @@ async function fixture(bHaircutBps = 10000) {
   await (await controller.pokeMode()).wait();
   await (await controller.pokeMode()).wait();
   assert.equal(await controller.mode(), 0n, "pre-state must be GREEN");
+  assert.equal(await controller.searcherRouteAllowed(), true, "validated Economic+Risk anchors must unlock execution");
 
   await (await engine.setGradientPool(await source.getAddress(), true)).wait();
   await (await engine.setGradientPool(await destination.getAddress(), true)).wait();

@@ -488,6 +488,7 @@ def run_rotation(
     venue_usd = price_vector(venue_multiplier or mark_multiplier)
     internal = make_internal(mark_usd)
     external = make_external(venue_usd, side_value_usd=external_side_value_usd)
+    initial_cycle_bound = external_cycle_upper_bound(external)
 
     protocol_start = protocol_hard_value_usd(internal, mark_usd)
     external_start = external_value_usd(external, mark_usd)
@@ -534,7 +535,7 @@ def run_rotation(
             conservation_error_usd=conservation,
         ))
 
-    return rows, external_cycle_upper_bound(external)
+    return rows, initial_cycle_bound
 
 
 def main() -> None:
@@ -565,7 +566,7 @@ def main() -> None:
             principal_steps=80,
         )
         print(f"\n{name}")
-        print(f"external-only marginal cycle upper bound: {cycle_bound:.9f}x")
+        print(f"initial external-only marginal cycle upper bound: {cycle_bound:.9f}x")
         print(f"profitable no-gradient route: {baseline is not None}")
         print(f"HardNAV-positive rotated cycles: {len(rows)}")
         if rows:

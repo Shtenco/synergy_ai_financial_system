@@ -5,7 +5,7 @@ from financial_os_v4.core import (
     BalanceSheet,
     Constitution,
     LiabilityPosition,
-    MonetaryAction,
+    MonetaryResidual,
     MonetaryState,
     TripleMoneyLedger,
 )
@@ -53,8 +53,9 @@ class TripleMoneyTests(unittest.TestCase):
 
 
 class PolicyTests(unittest.TestCase):
-    def test_rl_is_bounded(self):
-        state = MonetaryState(
+    @staticmethod
+    def _healthy_state() -> MonetaryState:
+        return MonetaryState(
             inflation=0.03,
             output_gap=0.01,
             unemployment_gap=0,
@@ -66,8 +67,15 @@ class PolicyTests(unittest.TestCase):
             upcoming_unlock_ratio_8w=0.10,
             external_pnl_ratio=0.02,
         )
+
+    def test_default_rl_residual_is_exactly_zero(self):
+        decision = Constitution().decide(self._healthy_state())
+        self.assertEqual(decision.rl_residual, MonetaryResidual())
+        self.assertEqual(decision.bounded, decision.baseline)
+
+    def test_rl_is_bounded(self):
         c = Constitution()
-        huge_rl = MonetaryAction(
+        huge_rl = MonetaryResidual(
             demurrage_rate=99,
             term_savings_reward_rate=99,
             credit_cap_ratio=99,
@@ -78,7 +86,7 @@ class PolicyTests(unittest.TestCase):
             midas_cap_ratio=99,
             buyback_profit_share=99,
         )
-        d = c.decide(state, huge_rl)
+        d = c.decide(self._healthy_state(), huge_rl)
         self.assertLessEqual(d.bounded.demurrage_rate, 0.06)
         self.assertLessEqual(d.bounded.credit_cap_ratio, 0.60)
         self.assertLessEqual(d.bounded.midas_cap_ratio, 0.15)

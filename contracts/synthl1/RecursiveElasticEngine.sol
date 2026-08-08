@@ -20,6 +20,8 @@ interface IGraphPoolRecursive {
     function reserve1() external view returns(uint256);
     function totalShares() external view returns(uint256);
     function shares(address) external view returns(uint256);
+    function liquidityManager() external view returns(address);
+    function restrictLiquidityProviders() external view returns(bool);
     function swapExactIn(bool zeroToOne,uint256 amountIn,uint256 minNetOut,address to) external returns(uint256);
     function spot1Per0() external view returns(uint256);
 }
@@ -43,12 +45,14 @@ interface IAccountingRecursive {
 ///
 /// Safety invariants:
 /// 1. QE/reinvestment only touches a 100% protocol-owned pulse pool.
-/// 2. Pulse pools must be registered as dynamic LP-owned protocol USDx accounts;
+/// 2. Managed pulse pools must reject third-party LP additions; otherwise an
+///    attacker could grief the 100%-ownership invariant with a tiny LP share.
+/// 3. Pulse pools must be registered as dynamic LP-owned protocol USDx accounts;
 ///    capture vault must be registered as a static protocol USDx account.
-/// 3. Engine and accounting must use the same protocolLiquidityOwner.
-/// 4. External USDx liabilities must remain covered by hard assets at or above
+/// 4. Engine and accounting must use the same protocolLiquidityOwner.
+/// 5. External USDx liabilities must remain covered by hard assets at or above
 ///    the configured minimum before every new pulse.
-/// 5. Every pulse is bounded against the pool's actual USDx quote reserve.
+/// 6. Every pulse is bounded against the pool's actual USDx quote reserve.
 contract RecursiveElasticEngine {
     using SafeTransferLib for address;
 
@@ -89,6 +93,7 @@ contract RecursiveElasticEngine {
     error ActiveEpoch();
     error InsufficientCaptured();
     error PulsePoolNotProtocolOwned();
+    error LiquidityGateNotConfigured();
     error AccountingNotConfigured();
     error ExternalUSDxUndercovered();
     error PulseTooLarge();
@@ -128,7 +133,7 @@ contract RecursiveElasticEngine {
         if (pool == address(0)) revert BadConfig();
         if (allowed) {
             if (IGraphPoolRecursive(pool).token0() != core || IGraphPoolRecursive(pool).token1() != usdx) revert BadConfig();
-            _requireProtocolOwnedPool(pool);
+            _requireManagedProtocolOwnedPool(pool);
             if (!accounting.isProtocolUSDxPoolAccount(pool)) revert AccountingNotConfigured();
             if (accounting.protocolLiquidityOwner() != protocolLiquidityOwner) revert AccountingNotConfigured();
         }
@@ -241,6 +246,11 @@ contract RecursiveElasticEngine {
         return total != 0 && IGraphPoolRecursive(pool).shares(protocolLiquidityOwner) == total;
     }
 
+    function isLiquidityGateConfigured(address pool) public view returns (bool) {
+        return IGraphPoolRecursive(pool).restrictLiquidityProviders()
+            && IGraphPoolRecursive(pool).liquidityManager() == protocolLiquidityOwner;
+    }
+
     function maxPulseForPool(address pool) public view returns (uint256) {
         return (IGraphPoolRecursive(pool).reserve1() * uint256(maxPulseBpsOfQuote)) / 10_000;
     }
@@ -251,15 +261,16 @@ contract RecursiveElasticEngine {
     }
 
     function _requireAccountingConfigured(address pool) internal view {
-        _requireProtocolOwnedPool(pool);
+        _requireManagedProtocolOwnedPool(pool);
         if (!accounting.isProtocolUSDxPoolAccount(pool) || !accounting.isProtocolUSDxAccount(address(capture))) {
             revert AccountingNotConfigured();
         }
         if (accounting.protocolLiquidityOwner() != protocolLiquidityOwner) revert AccountingNotConfigured();
     }
 
-    function _requireProtocolOwnedPool(address pool) internal view {
+    function _requireManagedProtocolOwnedPool(address pool) internal view {
         if (!isProtocolOwnedPulsePool(pool)) revert PulsePoolNotProtocolOwned();
+        if (!isLiquidityGateConfigured(pool)) revert LiquidityGateNotConfigured();
     }
 
     function _requireSolvent() internal view {

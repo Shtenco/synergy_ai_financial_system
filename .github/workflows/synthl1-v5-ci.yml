@@ -1,0 +1,60 @@
+name: SynthL1 V13 CI
+
+on:
+  push:
+    branches:
+      - synthl1-recursive-qe-mev-v5
+  pull_request:
+    paths:
+      - 'contracts/synthl1/**'
+      - 'contracts/test/MockERC20V6.sol'
+      - 'simulation/synthl1/**'
+      - 'tests/test_synthl1_*.py'
+      - 'test/synthl1_*.js'
+      - 'hardhat.config.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/synthl1-v5-ci.yml'
+
+jobs:
+  compile-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile Solidity
+        run: npm run compile
+
+      - name: Run SynthL1 atomic EVM tests
+        run: npm run test:synthl1:evm
+
+      - name: Run SynthL1 Python invariant tests
+        run: npm run test:synthl1
+
+      - name: Run full Python test suite
+        run: npm test
+
+      - name: Run supply-neutral gradient simulation
+        run: npm run sim:synthl1:gradient
+
+      - name: Run V13.1 stateful HardNAV graph audit
+        run: npm run sim:synthl1:v13
+
+      - name: Run V13.1 10-internal 50-external stress sweep
+        run: npm run stress:synthl1:v13

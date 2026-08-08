@@ -17,6 +17,7 @@ interface ICORERecursive {
 interface IGraphPoolRecursive {
     function token0() external view returns(address);
     function token1() external view returns(address);
+    function reserve1() external view returns(uint256);
     function totalShares() external view returns(uint256);
     function shares(address) external view returns(uint256);
     function swapExactIn(bool zeroToOne,uint256 amountIn,uint256 minNetOut,address to) external returns(uint256);
@@ -43,6 +44,7 @@ interface IAccountingRecursive {
 /// 2. Pulse pool and capture vault must be registered protocol USDx accounts.
 /// 3. External USDx liabilities must remain covered by hard assets at or above
 ///    the configured minimum before every new pulse.
+/// 4. Every pulse is bounded against the pool's actual USDx quote reserve.
 contract RecursiveElasticEngine {
     using SafeTransferLib for address;
 
@@ -67,6 +69,7 @@ contract RecursiveElasticEngine {
 
     uint256 public minReinvestUSDx = 1e12;
     uint16 public minExternalCoverageBps = 12_000; // 120%
+    uint32 public maxPulseBpsOfQuote = 50_000; // 500% of current USDx reserve; intentionally permits very large wedges.
 
     event PoolSet(address indexed pool, bool allowed);
     event EpochStarted(uint64 indexed epoch, address indexed pool, uint256 qeUSDx, uint256 coreBurned, uint256 newPrice);
@@ -74,6 +77,7 @@ contract RecursiveElasticEngine {
     event EpochStopped(uint64 indexed epoch);
     event TollSet(address indexed pool, bool zeroToOne, uint16 bps);
     event CoverageFloorSet(uint16 bps);
+    event MaxPulseSet(uint32 bpsOfQuote);
 
     error Unauthorized();
     error BadConfig();
@@ -83,6 +87,7 @@ contract RecursiveElasticEngine {
     error PulsePoolNotProtocolOwned();
     error AccountingNotConfigured();
     error ExternalUSDxUndercovered();
+    error PulseTooLarge();
 
     constructor(
         address core_,
@@ -136,6 +141,12 @@ contract RecursiveElasticEngine {
         emit CoverageFloorSet(bps);
     }
 
+    function setMaxPulseBpsOfQuote(uint32 bps) external onlyOwner {
+        if (bps < 100 || bps > 100_000) revert BadConfig(); // 1% .. 1000% of current quote reserve.
+        maxPulseBpsOfQuote = bps;
+        emit MaxPulseSet(bps);
+    }
+
     function setPoolToll(address pool, bool zeroToOne, uint16 bps) external onlyOperator {
         if (!pulsePool[pool]) revert BadConfig();
         capture.setOutputToll(pool, zeroToOne, bps);
@@ -147,6 +158,7 @@ contract RecursiveElasticEngine {
         if (!pulsePool[pool] || qeUSDx == 0) revert BadConfig();
         _requireAccountingConfigured(pool);
         _requireSolvent();
+        _requirePulseWithinLimit(pool, qeUSDx);
 
         active = true;
         epoch += 1;
@@ -172,6 +184,7 @@ contract RecursiveElasticEngine {
         if (!pulsePool[nextPool] || amount < minReinvestUSDx) revert BadConfig();
         _requireAccountingConfigured(nextPool);
         _requireSolvent();
+        _requirePulseWithinLimit(nextPool, amount);
         if (capture.available(usdx) < amount) revert InsufficientCaptured();
 
         capture.pullForReinvestment(usdx, address(this), amount);
@@ -195,6 +208,7 @@ contract RecursiveElasticEngine {
 
         usdReused = capture.available(usdx);
         if (usdReused < minReinvestUSDx) revert InsufficientCaptured();
+        _requirePulseWithinLimit(nextPool, usdReused);
 
         capture.pullForReinvestment(usdx, address(this), usdReused);
         coreBurned = _buybackAndBurn(nextPool, usdReused, minCoreOut);
@@ -222,6 +236,10 @@ contract RecursiveElasticEngine {
         return total != 0 && IGraphPoolRecursive(pool).shares(protocolLiquidityOwner) == total;
     }
 
+    function maxPulseForPool(address pool) public view returns (uint256) {
+        return (IGraphPoolRecursive(pool).reserve1() * uint256(maxPulseBpsOfQuote)) / 10_000;
+    }
+
     function recycleTurnoverMultiple1e18() external view returns (uint256) {
         if (initialQEMinted == 0) return 0;
         return (cumulativeReinvestedUSDx * 1e18) / initialQEMinted;
@@ -240,6 +258,10 @@ contract RecursiveElasticEngine {
 
     function _requireSolvent() internal view {
         if (accounting.externalCoverageBps() < minExternalCoverageBps) revert ExternalUSDxUndercovered();
+    }
+
+    function _requirePulseWithinLimit(address pool, uint256 amount) internal view {
+        if (amount > maxPulseForPool(pool)) revert PulseTooLarge();
     }
 
     function _buybackAndBurn(address pool, uint256 usdAmount, uint256 minCoreOut) internal returns (uint256 coreOut) {

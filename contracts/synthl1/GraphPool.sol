@@ -11,9 +11,12 @@ interface IMEVCapturePool {
 /// @notice Generic constant-product graph pool with an LP fee and a separate
 /// directional output toll. Deploy many instances to form the internal graph.
 ///
-/// For managed SynthL1 pulse pools, the owner may gate CORE->USDx (zeroToOne)
-/// through the taxed GraphArbExecutor. This prevents a searcher from bypassing
-/// realized-profit capture by calling the pool directly.
+/// For managed SynthL1 pulse pools, the owner may:
+/// - gate CORE->USDx (zeroToOne) through the taxed GraphArbExecutor; and
+/// - restrict liquidity additions to one protocol liquidity manager.
+///
+/// The LP restriction prevents a third party from adding a tiny LP position and
+/// griefing the recursive engine's 100%-protocol-owned pulse-pool invariant.
 contract GraphPool {
     using SafeTransferLib for address;
 
@@ -24,6 +27,10 @@ contract GraphPool {
     address public owner;
     address public arbExecutor;
     bool public restrictZeroToOne;
+
+    address public liquidityManager;
+    bool public restrictLiquidityProviders;
+
     uint16 public lpFeeBps = 30;
     bool public paused;
     uint256 private lockState = 1;
@@ -39,6 +46,7 @@ contract GraphPool {
     event LPFeeSet(uint16 bps);
     event Paused(bool value);
     event ArbExecutorSet(address indexed executor, bool restrictZeroToOne);
+    event LiquidityManagerSet(address indexed manager, bool restricted);
 
     error Unauthorized();
     error BadConfig();
@@ -54,6 +62,7 @@ contract GraphPool {
         token1 = token1_;
         capture = IMEVCapturePool(capture_);
         owner = owner_;
+        liquidityManager = owner_;
     }
 
     modifier onlyOwner(){ if (msg.sender != owner) revert Unauthorized(); _; }
@@ -78,9 +87,19 @@ contract GraphPool {
         emit ArbExecutorSet(executor, restrictDirection);
     }
 
+    /// @notice Managed pulse pools should set `restricted=true` and manager to
+    /// the same protocolLiquidityOwner configured in SystemAccounting/Engine.
+    function setLiquidityManager(address manager, bool restricted) external onlyOwner {
+        if (restricted && manager == address(0)) revert BadConfig();
+        liquidityManager = manager;
+        restrictLiquidityProviders = restricted;
+        emit LiquidityManagerSet(manager, restricted);
+    }
+
     function addLiquidity(uint256 amount0, uint256 amount1, uint256 minShares)
         external nonReentrant active returns (uint256 s)
     {
+        if (restrictLiquidityProviders && msg.sender != liquidityManager) revert Unauthorized();
         if (amount0 == 0 || amount1 == 0) revert BadConfig();
 
         if (totalShares == 0) {

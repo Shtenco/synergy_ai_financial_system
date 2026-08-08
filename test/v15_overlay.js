@@ -37,7 +37,8 @@ async function setup() {
   const liabilityId = ethers.keccak256(ethers.toUtf8Bytes("USDX_REDEMPTION"));
   await (await liabilities.addLiability(liabilityId, 18, E(1), 10000, ethers.ZeroAddress, E(100))).wait();
 
-  await (await risk.setRiskData(await usdc.getAddress(), E(1), E(1), 10000)).wait();
+  await (await risk.setHaircut(await usdc.getAddress(), 10000)).wait();
+  await (await risk.setRiskData(await usdc.getAddress(), E(1), E(1))).wait();
   await (await risk.addScenario(ethers.encodeBytes32String("BASE"), 10000, 0)).wait();
   await (await risk.setScenarioAsset(0, await usdc.getAddress(), 10000, 10000)).wait();
 
@@ -133,5 +134,30 @@ describe("V15 economic/risk overlay", function () {
     await (await router.recordContribution1e18(E(20))).wait();
     await (await router.settlePeriod(0)).wait();
     assert.equal(await router.distributableBudget1e18(), 0n);
+  });
+
+  it("carries losses forward so simple NAV recovery cannot be re-labeled as new profit", async function () {
+    const c = await setup();
+    const router = await deploy(
+      "V15RevenueRouter",
+      c.owner.address,
+      c.owner.address,
+      await c.ledger.getAddress(),
+      await c.controller.getAddress()
+    );
+
+    await (await router.startPeriod()).wait();
+    await (await c.usdc.transfer(c.outsider.address, E(20))).wait(); // hard loss from protocol account
+    await (await router.settlePeriod(0)).wait();
+    assert.equal(await router.lossCarryforward1e18(), E(20));
+    assert.equal(await router.distributableBudget1e18(), 0n);
+    await (await router.closePeriod()).wait();
+
+    await (await router.startPeriod()).wait();
+    await (await c.usdc.connect(c.outsider).transfer(c.owner.address, E(20))).wait(); // recover prior loss
+    await (await c.usdc.mint(c.owner.address, E(5))).wait(); // only 5 is new hard gain above recovery
+    await (await router.settlePeriod(0)).wait();
+    assert.equal(await router.lossCarryforward1e18(), 0n);
+    assert.equal(await router.distributableBudget1e18(), E(5));
   });
 });

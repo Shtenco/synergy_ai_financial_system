@@ -11,19 +11,9 @@ interface ICaptureGraphExec {
     function checkpoint(address token, uint256 amount) external;
 }
 
-/// @notice Public atomic graph router for MEV/searcher cycles.
-/// The searcher supplies its own principal. Every venue must be allowlisted.
-/// A configurable tax is charged only on REALIZED base-token profit, never on
-/// principal or gross swap output.
-///
-/// `profitTaxBps` is a ceiling. If applying that ceiling would leave less than
-/// `minSearcherReward[baseToken]`, the tax is automatically reduced so that a
-/// viable solver reward remains. This avoids a fixed 99% tax freezing small
-/// late-stage recursive opportunities while still maximizing protocol capture.
-///
-/// Managed pulse pools may additionally require one settlement/base token (USDx
-/// in the recursive engine). This prevents closing the QE wedge with a CORE-based
-/// cycle that would pay the protocol tax in the wrong asset and bypass USDx recycling.
+/// @notice Public atomic graph router for external searchers / MEV cycles.
+/// Searchers supply their own principal. Protocol tax is charged only on
+/// REALIZED base-token profit after all route legs, never on principal.
 contract GraphArbExecutor {
     using SafeTransferLib for address;
 
@@ -38,7 +28,14 @@ contract GraphArbExecutor {
 
     mapping(address => bool) public allowedTarget;
     mapping(address => address) public spenderForTarget;
+
+    // Legacy single-settlement binding, useful for a permanently dedicated venue.
     mapping(address => address) public requiredBaseTokenForTarget;
+
+    // Multi-asset settlement gate for V13-style source/destination combinations.
+    mapping(address => bool) public baseTokenGateEnabled;
+    mapping(address => mapping(address => bool)) public allowedBaseTokenForTarget;
+
     mapping(address => uint256) public minSearcherReward;
 
     struct Leg {
@@ -53,6 +50,8 @@ contract GraphArbExecutor {
 
     event VenueSet(address indexed target, address indexed spender, bool allowed);
     event RequiredBaseTokenSet(address indexed target, address indexed baseToken);
+    event BaseTokenGateSet(address indexed target, bool enabled);
+    event AllowedBaseTokenSet(address indexed target, address indexed baseToken, bool allowed);
     event ProfitTaxSet(uint16 bps);
     event MinSearcherRewardSet(address indexed baseToken, uint256 amount);
     event Cycle(
@@ -89,15 +88,32 @@ contract GraphArbExecutor {
         if (target == address(0) || spender == address(0)) revert BadRoute();
         allowedTarget[target] = allowed;
         spenderForTarget[target] = allowed ? spender : address(0);
-        if (!allowed) requiredBaseTokenForTarget[target] = address(0);
+        if (!allowed) {
+            requiredBaseTokenForTarget[target] = address(0);
+            baseTokenGateEnabled[target] = false;
+        }
         emit VenueSet(target, spender, allowed);
     }
 
-    /// @notice Set to zero for unrestricted settlement; set to USDx for managed pulse pools.
+    /// @notice Optional exact settlement token for a dedicated venue.
     function setRequiredBaseToken(address target, address baseToken) external onlyOwner {
         if (!allowedTarget[target]) revert VenueNotAllowed();
         requiredBaseTokenForTarget[target] = baseToken;
         emit RequiredBaseTokenSet(target, baseToken);
+    }
+
+    /// @notice Enables a many-to-many settlement-token allowlist. This is the
+    /// preferred mode for one internal pool participating in several V13 routes.
+    function setBaseTokenGate(address target, bool enabled) external onlyOwner {
+        if (!allowedTarget[target]) revert VenueNotAllowed();
+        baseTokenGateEnabled[target] = enabled;
+        emit BaseTokenGateSet(target, enabled);
+    }
+
+    function setAllowedBaseToken(address target, address baseToken, bool allowed) external onlyOwner {
+        if (!allowedTarget[target] || baseToken == address(0)) revert VenueNotAllowed();
+        allowedBaseTokenForTarget[target][baseToken] = allowed;
+        emit AllowedBaseTokenSet(target, baseToken, allowed);
     }
 
     /// @notice Maximum share of realized profit captured by the protocol.
@@ -107,8 +123,7 @@ contract GraphArbExecutor {
         emit ProfitTaxSet(bps);
     }
 
-    /// @notice Absolute base-token reward floor left to a solver after protocol tax.
-    /// Configure it from gas/risk economics of the relevant chain/token.
+    /// @notice Absolute base-token reward floor left to a solver after tax.
     function setMinSearcherReward(address baseToken, uint256 amount) external onlyOwner {
         if (baseToken == address(0)) revert BadRoute();
         minSearcherReward[baseToken] = amount;
@@ -117,7 +132,6 @@ contract GraphArbExecutor {
 
     function setPaused(bool value) external onlyOwner { paused = value; }
 
-    /// @param minNetProfit Optional additional minimum retained profit requested by the searcher.
     function executeCycle(
         address baseToken,
         uint256 principal,
@@ -142,8 +156,12 @@ contract GraphArbExecutor {
             Leg calldata leg = legs[i];
             if (leg.tokenIn != expected || leg.amountIn == 0 || leg.amountIn > available) revert BadRoute();
             if (!allowedTarget[leg.target] || spenderForTarget[leg.target] != leg.spender) revert VenueNotAllowed();
+
             address requiredBase = requiredBaseTokenForTarget[leg.target];
             if (requiredBase != address(0) && requiredBase != baseToken) revert WrongSettlementToken();
+            if (baseTokenGateEnabled[leg.target] && !allowedBaseTokenForTarget[leg.target][baseToken]) {
+                revert WrongSettlementToken();
+            }
 
             leg.tokenIn.forceApprove(leg.spender, leg.amountIn);
             uint256 beforeOut = IERC20GraphExec(leg.tokenOut).balanceOf(address(this));
@@ -161,7 +179,9 @@ contract GraphArbExecutor {
         }
 
         uint256 endingBase = IERC20GraphExec(baseToken).balanceOf(address(this));
-        uint256 grossReturned = endingBase + principal >= startingBase ? endingBase + principal - startingBase : 0;
+        uint256 grossReturned = endingBase + principal >= startingBase
+            ? endingBase + principal - startingBase
+            : 0;
         if (grossReturned <= principal) revert NotProfitable();
 
         uint256 grossProfit = grossReturned - principal;

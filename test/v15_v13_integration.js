@@ -105,6 +105,7 @@ async function fixture(bHaircutBps = 10000) {
     [E(1), E(1)]
   )).wait();
   await (await ledger.permanentlyExcludeAsset(await usdx.getAddress())).wait();
+  await (await adapter.setGradientEngine(await engine.getAddress(), true)).wait();
   await (await ledger.addHardAsset(await tokenA.getAddress())).wait();
   await (await ledger.addHardAsset(await tokenB.getAddress())).wait();
   await (await ledger.setHardAccount(await tokenA.getAddress(), await source.getAddress(), true)).wait();
@@ -132,7 +133,10 @@ async function fixture(bHaircutBps = 10000) {
     await engine.getAddress(), await source.getAddress(), await destination.getAddress(), E(40)
   )).wait();
 
-  return { owner, solver, tokenA, tokenB, usdx, capture, ledger, risk, liabilities, controller, adapter, coordinator, source, destination, external, engine, executor };
+  return {
+    owner, solver, tokenA, tokenB, usdx, capture, ledger, risk, liabilities, liabilityId,
+    controller, adapter, coordinator, source, destination, external, engine, executor
+  };
 }
 
 async function route(ctx, principal = E("39.8")) {
@@ -202,5 +206,40 @@ describe("V15 overlay over frozen V13.1", function () {
     assert.equal(await c.ledger.hardNAV1e18(), navBefore, "reverted route must not change Economic HardNAV");
     assert.equal(await c.source.reserve0(), source0);
     assert.equal(await c.destination.reserve0(), destination0);
+  });
+
+  it("blocks new direct searcher exploitation once mode falls to ORANGE", async function () {
+    const c = await fixture(10000);
+    // Coverage 200/180 = 111.1%: survival is ORANGE, but no new searcher risk is allowed.
+    await (await c.liabilities.setManualAmount(c.liabilityId, E(180))).wait();
+    await (await c.controller.pokeMode()).wait(); // GREEN -> YELLOW
+    await (await c.controller.pokeMode()).wait(); // YELLOW -> ORANGE
+    assert.equal(await c.controller.mode(), 2n);
+    assert.equal(await c.controller.routeSolvent(), true, "ORANGE should retain survival/restore ability");
+    assert.equal(await c.controller.searcherRouteAllowed(), false);
+    await mustRevert(execute(c), "ORANGE must block direct frozen executor exploitation");
+  });
+
+  it("can restore and close an already-active gradient after a liability shock drives the system to RED", async function () {
+    const c = await fixture(10000);
+    await (await execute(c)).wait();
+    assert.ok((await c.source.reserve0()) > E(60), "exploitation must displace synthetic into source");
+    assert.ok((await c.destination.reserve0()) < E(140), "exploitation must remove synthetic from destination");
+
+    // Push coverage below the 105% survival floor. New routes must stop.
+    await (await c.liabilities.setManualAmount(c.liabilityId, E(195))).wait();
+    await (await c.controller.pokeMode()).wait();
+    assert.equal(await c.controller.mode(), 3n, "shock must force RED");
+    assert.equal(await c.controller.searcherRouteAllowed(), false);
+
+    // Registered active engine receives the narrowly-scoped compatibility bypass
+    // only for frozen restoreGradient()'s coverage read.
+    await (await c.coordinator.restoreGradient(await c.engine.getAddress())).wait();
+    assert.equal(await c.source.reserve0(), E(60));
+    assert.equal(await c.destination.reserve0(), E(140));
+
+    await (await c.coordinator.closeGradient(await c.engine.getAddress())).wait();
+    assert.equal(await c.source.reserve0(), E(100));
+    assert.equal(await c.destination.reserve0(), E(100));
   });
 });

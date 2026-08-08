@@ -7,22 +7,34 @@ interface IERC20AccountingV5 {
     function decimals() external view returns (uint8);
 }
 
+interface IProtocolOwnedPoolAccounting {
+    function totalShares() external view returns (uint256);
+    function shares(address) external view returns (uint256);
+}
+
 /// @notice Conservative balance-sheet view for the recursive engine.
-/// `protocolUSDxAccount` may include a GraphPool only when that pool is 100% protocol-owned.
+/// Static treasury accounts and LP pool accounts are separated. A registered LP
+/// pool counts as protocol-held USDx only while the configured liquidity owner
+/// holds 100% of live LP shares. If a public LP appears, the pool's USDx is no
+/// longer subtracted from external liabilities automatically.
 contract SystemAccounting {
     address public owner;
     address public immutable hardToken;
     address public immutable usdx;
     uint8 public immutable hardDecimals;
 
+    address public protocolLiquidityOwner;
+
     address[] public hardAccounts;
     mapping(address => bool) public isHardAccount;
 
     address[] public protocolUSDxAccounts;
     mapping(address => bool) public isProtocolUSDxAccount;
+    mapping(address => bool) public isProtocolUSDxPoolAccount;
 
     event HardAccountAdded(address indexed account);
-    event ProtocolUSDxAccountAdded(address indexed account);
+    event ProtocolUSDxAccountAdded(address indexed account, bool poolAccount);
+    event ProtocolLiquidityOwnerSet(address indexed owner);
 
     error Unauthorized();
     error BadConfig();
@@ -34,9 +46,16 @@ contract SystemAccounting {
         hardDecimals = IERC20AccountingV5(hardToken_).decimals();
         if (hardDecimals > 18) revert BadConfig();
         owner = owner_;
+        protocolLiquidityOwner = owner_;
     }
 
     modifier onlyOwner(){ if (msg.sender != owner) revert Unauthorized(); _; }
+
+    function setProtocolLiquidityOwner(address account) external onlyOwner {
+        if (account == address(0)) revert BadConfig();
+        protocolLiquidityOwner = account;
+        emit ProtocolLiquidityOwnerSet(account);
+    }
 
     function addHardAccount(address account) external onlyOwner {
         if (account == address(0) || isHardAccount[account] || hardAccounts.length >= 32) revert BadConfig();
@@ -45,11 +64,23 @@ contract SystemAccounting {
         emit HardAccountAdded(account);
     }
 
+    /// @notice Register a static protocol account such as MEVCaptureReinvestor.
     function addProtocolUSDxAccount(address account) external onlyOwner {
+        _addProtocolUSDxAccount(account, false);
+    }
+
+    /// @notice Register a GraphPool-like account. Its USDx is counted as protocol
+    /// inventory only while protocolLiquidityOwner owns every live LP share.
+    function addProtocolUSDxPoolAccount(address account) external onlyOwner {
+        _addProtocolUSDxAccount(account, true);
+    }
+
+    function _addProtocolUSDxAccount(address account, bool poolAccount) internal {
         if (account == address(0) || isProtocolUSDxAccount[account] || protocolUSDxAccounts.length >= 64) revert BadConfig();
         isProtocolUSDxAccount[account] = true;
+        isProtocolUSDxPoolAccount[account] = poolAccount;
         protocolUSDxAccounts.push(account);
-        emit ProtocolUSDxAccountAdded(account);
+        emit ProtocolUSDxAccountAdded(account, poolAccount);
     }
 
     function hardAssets1e18() public view returns (uint256 total) {
@@ -59,9 +90,17 @@ contract SystemAccounting {
         }
     }
 
+    function isLiveProtocolOwnedPool(address account) public view returns (bool) {
+        if (!isProtocolUSDxPoolAccount[account]) return false;
+        uint256 total = IProtocolOwnedPoolAccounting(account).totalShares();
+        return total != 0 && IProtocolOwnedPoolAccounting(account).shares(protocolLiquidityOwner) == total;
+    }
+
     function protocolHeldUSDx() public view returns (uint256 held) {
         for (uint256 i = 0; i < protocolUSDxAccounts.length; ++i) {
-            held += IERC20AccountingV5(usdx).balanceOf(protocolUSDxAccounts[i]);
+            address account = protocolUSDxAccounts[i];
+            if (isProtocolUSDxPoolAccount[account] && !isLiveProtocolOwnedPool(account)) continue;
+            held += IERC20AccountingV5(usdx).balanceOf(account);
         }
         uint256 supply = IERC20AccountingV5(usdx).totalSupply();
         return held > supply ? supply : held;

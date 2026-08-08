@@ -16,7 +16,7 @@ async function mustRevert(promise, label) {
   assert.equal(reverted, true, label);
 }
 
-async function fixture(externalA, externalB, minProtocolGain = "0") {
+async function fixture(externalA, externalB, minProtocolGain = "0", oracleErrorBps = 0) {
   const [owner, solver] = await ethers.getSigners();
 
   const tokenA = await deploy("MockERC20V6", "Quote A", "A", 18);
@@ -91,6 +91,12 @@ async function fixture(externalA, externalB, minProtocolGain = "0") {
     await (await pool.setArbExecutor(await executor.getAddress(), true)).wait();
     await (await pool.setExecutorOnlyAllSwaps(true)).wait();
     await (await accounting.addProtocolUSDxPoolAccount(await pool.getAddress())).wait();
+
+    // Managed pools must be registered with the shared executor before the
+    // gradient engine will accept them.  This makes oracle-turnover accounting
+    // part of the production configuration invariant rather than an optional hint.
+    await (await executor.setVenue(await pool.getAddress(), await pool.getAddress(), true)).wait();
+    await (await executor.setProtocolTarget(await pool.getAddress(), true)).wait();
   }
   await (await accounting.addProtocolUSDxAccount(await capture.getAddress())).wait();
 
@@ -109,9 +115,9 @@ async function fixture(externalA, externalB, minProtocolGain = "0") {
   await (await engine.setGradientPool(await destination.getAddress(), true)).wait();
   await (await engine.initializeGradient(await source.getAddress(), await destination.getAddress(), E(40))).wait();
 
-  for (const pool of [source, destination, external]) {
-    await (await executor.setVenue(await pool.getAddress(), await pool.getAddress(), true)).wait();
-  }
+  // External venue is deliberately NOT a protocolTarget.  Its inventory is not
+  // protocol HardNAV and therefore must not enter the protocol turnover buffer.
+  await (await executor.setVenue(await external.getAddress(), await external.getAddress(), true)).wait();
   for (const pool of [source, destination]) {
     await (await executor.setBaseTokenGate(await pool.getAddress(), true)).wait();
     await (await executor.setAllowedBaseToken(await pool.getAddress(), await tokenB.getAddress(), true)).wait();
@@ -121,6 +127,7 @@ async function fixture(externalA, externalB, minProtocolGain = "0") {
   await (await executor.setProtocolNAVGuard(
     await accounting.getAddress(), true, E(minProtocolGain)
   )).wait();
+  await (await executor.setMaxOracleErrorBps(oracleErrorBps)).wait();
 
   return { owner, solver, tokenA, tokenB, usdx, capture, oracle, accounting, source, destination, external, engine, executor };
 }
@@ -167,14 +174,25 @@ async function buildRoute(ctx, principal) {
       )
     }
   ];
-  return { legs, returnedB };
+  return { legs, returnedB, syntheticOut, quoteAOut };
+}
+
+async function executePositiveFixture(ctx, principal = E("39.8")) {
+  const { legs, returnedB } = await buildRoute(ctx, principal);
+  assert.ok(returnedB > principal, "latent-basis gradient route must reward the solver");
+  await (await ctx.tokenB.connect(ctx.solver).approve(await ctx.executor.getAddress(), principal)).wait();
+  const block = await ethers.provider.getBlock("latest");
+  const tx = await ctx.executor.connect(ctx.solver).executeCycle(
+    await ctx.tokenB.getAddress(), principal, E("0.001"), legs, BigInt(block.timestamp + 600)
+  );
+  await tx.wait();
 }
 
 describe("SynthL1 V13 post-trade HardNAV guard", function () {
   this.timeout(120000);
 
   it("reverts a searcher-profitable self-gradient route when protocol HardNAV would fall", async function () {
-    const ctx = await fixture("10000", "10000", "0");
+    const ctx = await fixture("10000", "10000", "0", 0);
     const principal = E("15.5");
     const { legs, returnedB } = await buildRoute(ctx, principal);
     assert.ok(returnedB > principal, "gradient must create a raw solver edge");
@@ -201,23 +219,11 @@ describe("SynthL1 V13 post-trade HardNAV guard", function () {
   });
 
   it("accepts an initiated route that converts a latent external basis into positive HardNAV", async function () {
-    const ctx = await fixture("10000", "10100", "0.05");
-    const principal = E("39.8");
-    const { legs, returnedB } = await buildRoute(ctx, principal);
-    assert.ok(returnedB > principal, "latent-basis gradient route must reward the solver");
-
-    await (await ctx.tokenB.connect(ctx.solver).approve(await ctx.executor.getAddress(), principal)).wait();
+    const ctx = await fixture("10000", "10100", "0.05", 0);
     const navBefore = await ctx.accounting.consolidatedHardNAV1e18();
     const solverBefore = await ctx.tokenB.balanceOf(ctx.solver.address);
-    const block = await ethers.provider.getBlock("latest");
 
-    await (await ctx.executor.connect(ctx.solver).executeCycle(
-      await ctx.tokenB.getAddress(),
-      principal,
-      E("0.001"),
-      legs,
-      BigInt(block.timestamp + 600)
-    )).wait();
+    await executePositiveFixture(ctx);
 
     const navAfter = await ctx.accounting.consolidatedHardNAV1e18();
     const solverAfter = await ctx.tokenB.balanceOf(ctx.solver.address);
@@ -228,6 +234,44 @@ describe("SynthL1 V13 post-trade HardNAV guard", function () {
     const supply = await ctx.usdx.totalSupply();
     await (await ctx.engine.restoreGradient()).wait();
     assert.equal(await ctx.usdx.totalSupply(), supply, "restore must remain supply-neutral");
+    assert.equal(await ctx.source.reserve0(), E(60));
+    assert.equal(await ctx.destination.reserve0(), E(140));
+  });
+
+  it("accepts the latent-basis route with a 10 bps symmetric oracle-error buffer", async function () {
+    const ctx = await fixture("10000", "10100", "0", 10);
+    const navBefore = await ctx.accounting.consolidatedHardNAV1e18();
+
+    await executePositiveFixture(ctx);
+
+    const navAfter = await ctx.accounting.consolidatedHardNAV1e18();
+    assert.ok(navAfter > navBefore, "10 bps robust-bound route must remain HardNAV positive");
+  });
+
+  it("reverts the same latent-basis route when the oracle-error buffer is widened to 20 bps", async function () {
+    const ctx = await fixture("10000", "10100", "0", 20);
+    const principal = E("39.8");
+    const { legs, returnedB } = await buildRoute(ctx, principal);
+    assert.ok(returnedB > principal, "raw solver edge must still exist before robust NAV rejection");
+
+    await (await ctx.tokenB.connect(ctx.solver).approve(await ctx.executor.getAddress(), principal)).wait();
+    const navBefore = await ctx.accounting.consolidatedHardNAV1e18();
+    const captureBefore = await ctx.tokenB.balanceOf(await ctx.capture.getAddress());
+    const block = await ethers.provider.getBlock("latest");
+
+    await mustRevert(
+      ctx.executor.connect(ctx.solver).executeCycle(
+        await ctx.tokenB.getAddress(),
+        principal,
+        E("0.001"),
+        legs,
+        BigInt(block.timestamp + 600)
+      ),
+      "20 bps uncertainty buffer must reject the thin midpoint profit"
+    );
+
+    assert.equal(await ctx.accounting.consolidatedHardNAV1e18(), navBefore);
+    assert.equal(await ctx.tokenB.balanceOf(await ctx.capture.getAddress()), captureBefore);
     assert.equal(await ctx.source.reserve0(), E(60));
     assert.equal(await ctx.destination.reserve0(), E(140));
   });

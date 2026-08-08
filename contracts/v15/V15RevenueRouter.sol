@@ -7,6 +7,7 @@ interface IV15RevenueLedger {
     function hardNAV1e18() external view returns (int256);
     function markValue1e18(address token, uint256 amount) external view returns (uint256);
     function isHardAsset(address token) external view returns (bool);
+    function isHardAccount(address token, address account) external view returns (bool);
 }
 
 interface IV15RevenueSolvency {
@@ -15,6 +16,10 @@ interface IV15RevenueSolvency {
 
 /// @notice Distributes only capital-flow-adjusted realized HardNAV profit and only
 /// while the post-transfer solvency state remains distribution-safe.
+///
+/// Hard tokens distributed by this router MUST be counted by V15EconomicLedger at
+/// this router address. Otherwise a transfer could fail to reduce recorded HardNAV
+/// and the revenue budget would no longer represent economic withdrawals.
 contract V15RevenueRouter {
     using SafeTransferLib for address;
 
@@ -49,9 +54,12 @@ contract V15RevenueRouter {
     error BadConfig();
     error InsolventDistribution();
     error BudgetExceeded();
+    error UnaccountedCustody();
 
     constructor(address owner_, address reporter_, address ledger_, address controller_) {
-        if (owner_ == address(0) || reporter_ == address(0) || ledger_ == address(0) || controller_ == address(0)) revert BadConfig();
+        if (owner_ == address(0) || reporter_ == address(0) || ledger_ == address(0) || controller_ == address(0)) {
+            revert BadConfig();
+        }
         owner = owner_;
         capitalFlowReporter = reporter_;
         ledger = IV15RevenueLedger(ledger_);
@@ -122,11 +130,14 @@ contract V15RevenueRouter {
 
     function distribute(address token, address to, uint256 amount) external onlyOwner {
         if (!periodOpen || !periodSettled || to == address(0) || amount == 0 || !ledger.isHardAsset(token)) revert BadConfig();
+        if (!ledger.isHardAccount(token, address(this))) revert UnaccountedCustody();
         if (!controller.distributionAllowed()) revert InsolventDistribution();
+
         uint256 value = ledger.markValue1e18(token, amount);
         if (distributed1e18 + value > distributableBudget1e18) revert BudgetExceeded();
         distributed1e18 += value;
         token.safeTransfer(to, amount);
+
         // Post-transfer solvency check. Revert rolls the token transfer back atomically.
         if (!controller.distributionAllowed()) revert InsolventDistribution();
         emit Distributed(token, to, amount, value);

@@ -8,6 +8,7 @@ interface IV15EconomicLedgerAdapter {
     function markValue1e18(address token, uint256 amount) external view returns (uint256);
     function permanentlyExcludedAsset(address token) external view returns (bool);
     function oracleValidationReady() external view returns (bool);
+    function oracleValidationCoversAllAssets() external view returns (bool);
 }
 
 interface IV15PostRouteGateAdapter {
@@ -44,6 +45,7 @@ contract V15AccountingAdapter {
     error BadConfig();
     error SyntheticNotPermanentlyExcluded();
     error OracleValidationNotReady();
+    error AccountingNotReady();
 
     constructor(address owner_, address liquidityOwner_, address ledger_, address gate_, address controller_) {
         if (
@@ -78,10 +80,13 @@ contract V15AccountingAdapter {
         if (synthetic == address(0)) revert BadConfig();
         if (enabled) {
             // Monetary operation is unavailable until the independent economic
-            // validation oracle is configured and irreversibly frozen.
-            if (!ledger.oracleValidationReady()) revert OracleValidationNotReady();
-            // A registered monetary synthetic can never later be promoted into
-            // Economic HardAssets. The ledger exclusion is irreversible.
+            // validator is frozen AND fresh for every registered hard asset.
+            if (!ledger.oracleValidationReady() || !ledger.oracleValidationCoversAllAssets()) {
+                revert OracleValidationNotReady();
+            }
+            // Force a complete balance-sheet read now. Any stale/missing liability
+            // or other accounting failure prevents engine registration.
+            ledger.hardNAV1e18();
             if (!ledger.permanentlyExcludedAsset(synthetic) || ledger.isHardAsset(synthetic)) {
                 revert SyntheticNotPermanentlyExcluded();
             }

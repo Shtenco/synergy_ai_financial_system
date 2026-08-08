@@ -15,6 +15,11 @@ interface IV15LiabilitiesCanonical {
 }
 
 /// @notice Canonical economic ledger. No haircut and no own-synthetic markups.
+///
+/// Before monetary-engine activation, governance must configure and one-way freeze
+/// an independent validation oracle. Economic marks then use the LOWER of the two
+/// fresh canonical feeds. This is an anti-overstatement rule, not a RiskNAV haircut:
+/// a single compromised feed cannot unilaterally inflate Economic HardNAV.
 contract V15EconomicLedger {
     struct AssetConfig { bool enabled; uint8 decimals; }
 
@@ -24,6 +29,8 @@ contract V15EconomicLedger {
     address public owner;
     address public immutable oracle;
     address public immutable liabilityRegistry;
+    address public validationOracle;
+    bool public validationOracleFrozen;
 
     address[] private assets;
     mapping(address => AssetConfig) public assetConfig;
@@ -35,9 +42,11 @@ contract V15EconomicLedger {
     event AssetPermanentlyExcluded(address indexed token);
     event HardAssetAdded(address indexed token, uint8 decimals);
     event HardAccountSet(address indexed token, address indexed account, bool enabled);
+    event ValidationOracleSet(address indexed validationOracle, bool frozen);
 
     error Unauthorized();
     error BadConfig();
+    error Frozen();
 
     constructor(address owner_, address oracle_, address liabilityRegistry_) {
         if (owner_ == address(0) || oracle_ == address(0) || liabilityRegistry_ == address(0)) revert BadConfig();
@@ -47,6 +56,32 @@ contract V15EconomicLedger {
     }
 
     modifier onlyOwner() { if (msg.sender != owner) revert Unauthorized(); _; }
+
+    /// @notice Configure an independent canonical validator. Once frozen, neither
+    /// the address nor the requirement can be relaxed through this ledger.
+    function setValidationOracle(address validator, bool freeze) external onlyOwner {
+        if (validationOracleFrozen) revert Frozen();
+        if (validator == address(0) || validator == oracle) revert BadConfig();
+        validationOracle = validator;
+        if (freeze) validationOracleFrozen = true;
+        emit ValidationOracleSet(validator, validationOracleFrozen);
+    }
+
+    function oracleValidationReady() public view returns (bool) {
+        return validationOracle != address(0) && validationOracleFrozen;
+    }
+
+    /// @notice Economic canonical mark. During bootstrap, before validator setup,
+    /// the primary oracle remains readable for configuration/tests. Monetary-engine
+    /// registration is separately forbidden until oracleValidationReady()==true.
+    /// Once a validator exists, both feeds must be fresh/readable or this view reverts.
+    function canonicalPrice1e18(address token) public view returns (uint256) {
+        uint256 primary = IV15CanonicalOracle(oracle).price1e18(token);
+        address validator = validationOracle;
+        if (validator == address(0)) return primary;
+        uint256 secondary = IV15CanonicalOracle(validator).price1e18(token);
+        return primary < secondary ? primary : secondary;
+    }
 
     /// @dev One-way switch. Use for SYNA/SYNR/USDx and every own synthetic.
     function permanentlyExcludeAsset(address token) external onlyOwner {
@@ -91,7 +126,7 @@ contract V15EconomicLedger {
     function markValue1e18(address token, uint256 amount) public view returns (uint256) {
         AssetConfig memory c = assetConfig[token];
         if (!c.enabled) revert BadConfig();
-        uint256 p = IV15CanonicalOracle(oracle).price1e18(token);
+        uint256 p = canonicalPrice1e18(token);
         return (amount * p) / (10 ** uint256(c.decimals));
     }
 

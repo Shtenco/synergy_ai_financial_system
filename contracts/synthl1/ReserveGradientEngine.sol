@@ -12,6 +12,10 @@ interface IUSDxGradient {
 
 interface IGradientExecutorRegistry {
     function protocolTarget(address target) external view returns (bool);
+    function gradientEngine() external view returns (address);
+    function enforceActiveGradientPair() external view returns (bool);
+    function enforceProtocolNAV() external view returns (bool);
+    function navAccounting() external view returns (address);
 }
 
 interface IGraphPoolGradient {
@@ -52,9 +56,9 @@ interface IAccountingGradient {
 ///   4. searchers exploit the resulting cross-pool/cross-asset gradient through
 ///      GraphArbExecutor, which taxes REALIZED arbitrage profit and enforces a
 ///      post-trade consolidated HardNAV increase with an oracle-error buffer;
-///   5. restore the exact synthetic reserve targets by another equal burn/mint shift;
-///   6. reinvest physically captured quote assets into selected protocol pools;
-///   7. exploit the gradient again or rotate it.
+///   5. multiple accepted cycles may consume the active pair while state changes;
+///   6. restore the accumulated equal-and-opposite synthetic displacement;
+///   7. reinvest physically captured quote assets and close/rotate the gradient.
 ///
 /// No real token1 reserve can be administratively withdrawn by this contract.
 /// The controlled synthetic total supply must be identical before/after every shift.
@@ -201,6 +205,11 @@ contract ReserveGradientEngine {
         if (IGraphPoolGradient(source).arbExecutor() != IGraphPoolGradient(destination).arbExecutor()) {
             revert ExecutorMismatch();
         }
+        // A reserve gradient between two pools quoted in the same hard asset adds
+        // no cross-asset execution geometry and is excluded from this engine.
+        if (IGraphPoolGradient(source).token1() == IGraphPoolGradient(destination).token1()) {
+            revert BadConfig();
+        }
         _requireSolvent();
 
         uint256 sourceBefore = IGraphPoolGradient(source).reserve0();
@@ -341,9 +350,17 @@ contract ReserveGradientEngine {
 
         address executor = p.arbExecutor();
         if (!p.executorOnlyAllSwaps() || executor == address(0)) revert PoolNotManaged();
-        // Ensures the executor's oracle-error turnover buffer cannot silently omit
-        // this managed internal pool.
-        if (!IGradientExecutorRegistry(executor).protocolTarget(pool)) revert PoolNotManaged();
+
+        IGradientExecutorRegistry registry = IGradientExecutorRegistry(executor);
+        if (!registry.protocolTarget(pool)) revert PoolNotManaged();
+        if (registry.gradientEngine() != address(this) || !registry.enforceActiveGradientPair()) {
+            revert PoolNotManaged();
+        }
+        // A managed gradient cannot be activated with the economic acceptance gate
+        // disabled or pointed at a different accounting contract.
+        if (!registry.enforceProtocolNAV() || registry.navAccounting() != address(accounting)) {
+            revert AccountingNotConfigured();
+        }
 
         if (!accounting.isProtocolUSDxPoolAccount(pool)) revert AccountingNotConfigured();
         if (accounting.protocolLiquidityOwner() != protocolLiquidityOwner) revert AccountingNotConfigured();

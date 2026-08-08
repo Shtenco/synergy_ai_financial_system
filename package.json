@@ -6,8 +6,9 @@
   "scripts": {
     "compile": "hardhat compile",
     "test": "python -m unittest discover -s tests -v",
-    "test:synthl1": "python -m unittest tests.test_synthl1_recursive_qe_mev -v",
+    "test:synthl1": "python -m unittest tests.test_synthl1_recursive_qe_mev tests.test_synthl1_economic_audit -v",
     "sim:synthl1": "python simulation/synthl1/recursive_qe_mev.py",
+    "audit:synthl1": "python simulation/synthl1/economic_audit.py",
     "fork:preflight": "hardhat run scripts/fork_preflight.js --network hardhat",
     "solver:watch": "node scripts/watch_solver_auction.js",
     "solver:bid": "node scripts/submit_solver_bid.js",

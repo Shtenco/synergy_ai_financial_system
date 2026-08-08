@@ -53,6 +53,8 @@ interface IAccountingRecursive {
 /// 5. External USDx liabilities must remain covered by hard assets at or above
 ///    the configured minimum before every new pulse.
 /// 6. Every pulse is bounded against the pool's actual USDx quote reserve.
+/// 7. Every epoch has an explicit cumulative CORE-burn budget. This prevents
+///    very large wedges from silently consuming the graph's future CORE depth.
 contract RecursiveElasticEngine {
     using SafeTransferLib for address;
 
@@ -78,6 +80,7 @@ contract RecursiveElasticEngine {
     uint256 public minReinvestUSDx = 1e12;
     uint16 public minExternalCoverageBps = 12_000; // 120%
     uint32 public maxPulseBpsOfQuote = 50_000; // 500% of current USDx reserve; intentionally permits very large wedges.
+    uint256 public maxCoreBurnPerEpoch; // must be configured explicitly before starting an epoch.
 
     event PoolSet(address indexed pool, bool allowed);
     event EpochStarted(uint64 indexed epoch, address indexed pool, uint256 qeUSDx, uint256 coreBurned, uint256 newPrice);
@@ -86,6 +89,7 @@ contract RecursiveElasticEngine {
     event TollSet(address indexed pool, bool zeroToOne, uint16 bps);
     event CoverageFloorSet(uint16 bps);
     event MaxPulseSet(uint32 bpsOfQuote);
+    event CoreBurnBudgetSet(uint256 maxCoreBurnPerEpoch);
 
     error Unauthorized();
     error BadConfig();
@@ -97,6 +101,8 @@ contract RecursiveElasticEngine {
     error AccountingNotConfigured();
     error ExternalUSDxUndercovered();
     error PulseTooLarge();
+    error CoreBurnBudgetNotConfigured();
+    error CoreBurnBudgetExceeded();
 
     constructor(
         address core_,
@@ -157,6 +163,14 @@ contract RecursiveElasticEngine {
         emit MaxPulseSet(bps);
     }
 
+    /// @notice Explicit absolute CORE destruction budget for one recursive epoch.
+    /// Set this from graph liquidity/risk policy before `initializeQE`.
+    function setMaxCoreBurnPerEpoch(uint256 amount) external onlyOwner {
+        if (amount == 0) revert BadConfig();
+        maxCoreBurnPerEpoch = amount;
+        emit CoreBurnBudgetSet(amount);
+    }
+
     function setPoolToll(address pool, bool zeroToOne, uint16 bps) external onlyOperator {
         if (!pulsePool[pool]) revert BadConfig();
         capture.setOutputToll(pool, zeroToOne, bps);
@@ -166,6 +180,7 @@ contract RecursiveElasticEngine {
     function initializeQE(address pool, uint256 qeUSDx, uint256 minCoreOut) external onlyOperator returns (uint256 coreBurned) {
         if (active) revert ActiveEpoch();
         if (!pulsePool[pool] || qeUSDx == 0) revert BadConfig();
+        if (maxCoreBurnPerEpoch == 0) revert CoreBurnBudgetNotConfigured();
         _requireAccountingConfigured(pool);
         _requireSolvent();
         _requirePulseWithinLimit(pool, qeUSDx);
@@ -179,6 +194,7 @@ contract RecursiveElasticEngine {
 
         IUSDxRecursive(usdx).mint(address(this), qeUSDx);
         coreBurned = _buybackAndBurn(pool, qeUSDx, minCoreOut);
+        _requireCoreBurnBudget(coreBurned);
 
         lastPulseUSDx = qeUSDx;
         pulses = 1;
@@ -199,6 +215,7 @@ contract RecursiveElasticEngine {
 
         capture.pullForReinvestment(usdx, address(this), amount);
         coreBurned = _buybackAndBurn(nextPool, amount, minCoreOut);
+        _requireCoreBurnBudget(coreBurned);
 
         cumulativeReinvestedUSDx += amount;
         cumulativeCOREBurned += coreBurned;
@@ -222,6 +239,7 @@ contract RecursiveElasticEngine {
 
         capture.pullForReinvestment(usdx, address(this), usdReused);
         coreBurned = _buybackAndBurn(nextPool, usdReused, minCoreOut);
+        _requireCoreBurnBudget(coreBurned);
 
         cumulativeReinvestedUSDx += usdReused;
         cumulativeCOREBurned += coreBurned;
@@ -255,6 +273,11 @@ contract RecursiveElasticEngine {
         return (IGraphPoolRecursive(pool).reserve1() * uint256(maxPulseBpsOfQuote)) / 10_000;
     }
 
+    function remainingCoreBurnBudget() external view returns (uint256) {
+        if (maxCoreBurnPerEpoch <= cumulativeCOREBurned) return 0;
+        return maxCoreBurnPerEpoch - cumulativeCOREBurned;
+    }
+
     function recycleTurnoverMultiple1e18() external view returns (uint256) {
         if (initialQEMinted == 0) return 0;
         return (cumulativeReinvestedUSDx * 1e18) / initialQEMinted;
@@ -279,6 +302,11 @@ contract RecursiveElasticEngine {
 
     function _requirePulseWithinLimit(address pool, uint256 amount) internal view {
         if (amount > maxPulseForPool(pool)) revert PulseTooLarge();
+    }
+
+    function _requireCoreBurnBudget(uint256 nextBurn) internal view {
+        if (maxCoreBurnPerEpoch == 0) revert CoreBurnBudgetNotConfigured();
+        if (cumulativeCOREBurned + nextBurn > maxCoreBurnPerEpoch) revert CoreBurnBudgetExceeded();
     }
 
     function _buybackAndBurn(address pool, uint256 usdAmount, uint256 minCoreOut) internal returns (uint256 coreOut) {

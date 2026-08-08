@@ -10,6 +10,7 @@ from financial_os_v4.core import (
     TripleMoneyLedger,
 )
 from financial_os_v4.simulation import base_200_participant_scenario
+from financial_os_v4.snapshot import FinancialSnapshot
 
 
 class BalanceSheetTests(unittest.TestCase):
@@ -110,6 +111,44 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(d.bounded.midas_cap_ratio, 0)
         self.assertEqual(d.bounded.buyback_profit_share, 0)
         self.assertIn("UNBACKED_MINT", d.invariant_failures)
+
+
+class SnapshotTests(unittest.TestCase):
+    def test_snapshot_is_deterministic_and_accounting_first(self):
+        sheet = BalanceSheet(
+            assets=[
+                AssetPosition("USDC", 1_500_000),
+                AssetPosition(
+                    "performing P2P loans",
+                    500_000,
+                    hard_haircut=0,
+                    liquid_haircut=0.50,
+                    economic_haircut=0.90,
+                ),
+            ],
+            liabilities=[LiabilityPosition("SYNT", 1_000_000)],
+            net_new_capital=100_000,
+        )
+        ledger = TripleMoneyLedger(
+            syna_equity_units=10_000,
+            synr_reserve_units=10_000,
+            synt_money_units=1_000_000,
+            hard_reserve_value=1_500_000,
+            reserve_basket_value=2_000_000,
+            external_liabilities=1_000_000,
+        )
+        policy = Constitution().decide(PolicyTests._healthy_state())
+        snapshot = FinancialSnapshot.capture(
+            sequence=42,
+            balance_sheet=sheet,
+            ledger=ledger,
+            policy=policy,
+            previous_hard_nav=300_000,
+        )
+        self.assertEqual(snapshot.hard_nav, 500_000)
+        self.assertEqual(snapshot.distributable_profit, 100_000)
+        self.assertEqual(len(snapshot.digest_sha256), 64)
+        self.assertEqual(snapshot.digest_sha256, snapshot.digest_sha256)
 
 
 class ScenarioTests(unittest.TestCase):

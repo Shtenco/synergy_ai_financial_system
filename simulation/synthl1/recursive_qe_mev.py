@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""SynthL1 V5.1 recursive QE/MEV reference model.
+"""SynthL1 V5.2 recursive QE/MEV reference model.
 
 Exact loop:
   initial QE USDx -> CORE buyback+burn -> graph wedge -> taxed searcher arb ->
   protocol USDx realized-profit tax -> tax reinvested into next buyback+burn -> repeat.
+
+The protocol tax is adaptive: `capture_share` is a ceiling, while the model leaves
+an explicit solver compensation floor equal to gas + requested risk/reward. This
+matches GraphArbExecutor V5.2, where a 99% maximum tax is reduced automatically
+when needed to preserve a configured solver reward floor.
 
 The model intentionally separates recycled tax turnover from hard economic profit
 and explicitly caps the external USDx principal available to the searcher.
@@ -46,20 +51,22 @@ def pulse(pools: List[Pool], index: int, usdx: float) -> Tuple[List[Pool], float
 
 def best_profit_tax_arb(
     pools: List[Pool],
-    profit_tax_share: float,
+    max_profit_tax_share: float,
     searcher_gas_usdx: float = 0.0,
     min_searcher_reward_usdx: float = 0.0,
     external_principal_cap_usdx: float = math.inf,
 ):
-    """Searcher-optimal route under a proportional tax on REALIZED profit.
+    """Searcher-optimal route under an adaptive proportional tax on REALIZED profit.
 
-    A constant tax on `grossProfit = returned - principal` scales profit but does
-    not change the gross-profit-maximizing trade size unless external principal
-    availability itself is binding. The route executes only when the searcher's
-    retained reward covers gas plus the configured reward floor.
+    The gross-profit-maximizing route is found first. The protocol then captures
+    at most `max_profit_tax_share` of gross profit, but reduces the tax if needed
+    to leave `searcher_gas_usdx + min_searcher_reward_usdx` to the solver.
+
+    This is a model of a protocol-configured reward floor. A searcher cannot lower
+    the tax merely by asking for a larger reward; the floor is policy input.
     """
-    if not (0.0 <= profit_tax_share < 1.0):
-        raise ValueError("profit_tax_share must be in [0,1)")
+    if not (0.0 <= max_profit_tax_share < 1.0):
+        raise ValueError("max_profit_tax_share must be in [0,1)")
     if external_principal_cap_usdx < 0:
         raise ValueError("external_principal_cap_usdx must be non-negative")
 
@@ -85,8 +92,14 @@ def best_profit_tax_arb(
         return pools, 0.0, 0.0, 0.0, 0.0, 0.0
 
     gross, q = best
-    protocol_tax = profit_tax_share * gross
-    searcher_reward = (1.0 - profit_tax_share) * gross
+    compensation_floor = searcher_gas_usdx + min_searcher_reward_usdx
+    if gross <= compensation_floor:
+        return pools, 0.0, 0.0, gross, gross - searcher_gas_usdx, q
+
+    max_tax = max_profit_tax_share * gross
+    tax_leaving_floor = gross - compensation_floor
+    protocol_tax = min(max_tax, tax_leaving_floor)
+    searcher_reward = gross - protocol_tax
     searcher_net_after_gas = searcher_reward - searcher_gas_usdx
 
     if searcher_net_after_gas < min_searcher_reward_usdx or searcher_net_after_gas <= 0:
@@ -96,8 +109,11 @@ def best_profit_tax_arb(
     next_pools[buy], core = usdx_to_core(next_pools[buy], q)
     next_pools[sell], out = core_to_usdx(next_pools[sell], core)
     gross = out - q
-    protocol_tax = profit_tax_share * gross
-    searcher_reward = (1.0 - profit_tax_share) * gross
+
+    max_tax = max_profit_tax_share * gross
+    tax_leaving_floor = max(0.0, gross - compensation_floor)
+    protocol_tax = min(max_tax, tax_leaving_floor)
+    searcher_reward = gross - protocol_tax
     searcher_net_after_gas = searcher_reward - searcher_gas_usdx
     return next_pools, protocol_tax, searcher_reward, gross, searcher_net_after_gas, q
 

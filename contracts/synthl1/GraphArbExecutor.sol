@@ -7,16 +7,24 @@ interface IERC20GraphExec {
     function balanceOf(address) external view returns (uint256);
 }
 
+interface ICaptureGraphExec {
+    function checkpoint(address token, uint256 amount) external;
+}
+
 /// @notice Public atomic graph router for MEV/searcher cycles.
-/// The bot supplies its own principal. Every venue must be allowlisted.
-/// Internal GraphPool legs charge their configured protocol toll.
-/// The router itself never fabricates profit: final base-token balance must exceed principal.
+/// The searcher supplies its own principal. Every venue must be allowlisted.
+/// A configurable tax is charged only on REALIZED base-token profit, never on
+/// principal or gross swap output. This preserves the route-size incentive much
+/// better than a large output toll and makes recursive capture measurable.
 contract GraphArbExecutor {
     using SafeTransferLib for address;
 
     uint256 public constant MAX_LEGS = 10;
+    uint16 public constant MAX_PROFIT_TAX_BPS = 9_900;
 
     address public owner;
+    address public immutable capture;
+    uint16 public profitTaxBps;
     bool public paused;
     uint256 private lockState = 1;
 
@@ -34,7 +42,17 @@ contract GraphArbExecutor {
     }
 
     event VenueSet(address indexed target, address indexed spender, bool allowed);
-    event Cycle(address indexed searcher, address indexed baseToken, uint256 principal, uint256 returned, uint256 profit, uint256 legs);
+    event ProfitTaxSet(uint16 bps);
+    event Cycle(
+        address indexed searcher,
+        address indexed baseToken,
+        uint256 principal,
+        uint256 grossReturned,
+        uint256 grossProfit,
+        uint256 protocolTax,
+        uint256 netProfit,
+        uint256 legs
+    );
 
     error Unauthorized();
     error BadRoute();
@@ -45,9 +63,10 @@ contract GraphArbExecutor {
     error Reentrancy();
     error PausedError();
 
-    constructor(address owner_) {
-        if (owner_ == address(0)) revert BadRoute();
+    constructor(address owner_, address capture_) {
+        if (owner_ == address(0) || capture_ == address(0)) revert BadRoute();
         owner = owner_;
+        capture = capture_;
     }
 
     modifier onlyOwner(){ if (msg.sender != owner) revert Unauthorized(); _; }
@@ -60,15 +79,22 @@ contract GraphArbExecutor {
         emit VenueSet(target, spender, allowed);
     }
 
+    function setProfitTaxBps(uint16 bps) external onlyOwner {
+        if (bps > MAX_PROFIT_TAX_BPS) revert BadRoute();
+        profitTaxBps = bps;
+        emit ProfitTaxSet(bps);
+    }
+
     function setPaused(bool value) external onlyOwner { paused = value; }
 
+    /// @param minNetProfit Minimum profit retained by the searcher AFTER protocol tax.
     function executeCycle(
         address baseToken,
         uint256 principal,
-        uint256 minProfit,
+        uint256 minNetProfit,
         Leg[] calldata legs,
         uint256 deadline
-    ) external nonReentrant returns (uint256 returned, uint256 profit) {
+    ) external nonReentrant returns (uint256 returned, uint256 netProfit) {
         if (paused) revert PausedError();
         if (block.timestamp > deadline || principal == 0) revert BadRoute();
 
@@ -103,13 +129,22 @@ contract GraphArbExecutor {
         }
 
         uint256 endingBase = IERC20GraphExec(baseToken).balanceOf(address(this));
-        uint256 cycleBase = endingBase + principal >= startingBase ? endingBase + principal - startingBase : 0;
-        if (cycleBase < principal + minProfit) revert NotProfitable();
+        uint256 grossReturned = endingBase + principal >= startingBase ? endingBase + principal - startingBase : 0;
+        if (grossReturned <= principal) revert NotProfitable();
 
-        returned = cycleBase;
-        profit = returned - principal;
+        uint256 grossProfit = grossReturned - principal;
+        uint256 protocolTax = (grossProfit * profitTaxBps) / 10_000;
+        netProfit = grossProfit - protocolTax;
+        if (netProfit < minNetProfit) revert NotProfitable();
+
+        if (protocolTax != 0) {
+            baseToken.safeTransfer(capture, protocolTax);
+            ICaptureGraphExec(capture).checkpoint(baseToken, protocolTax);
+        }
+
+        returned = principal + netProfit;
         baseToken.safeTransfer(msg.sender, returned);
 
-        emit Cycle(msg.sender, baseToken, principal, returned, profit, n);
+        emit Cycle(msg.sender, baseToken, principal, grossReturned, grossProfit, protocolTax, netProfit, n);
     }
 }

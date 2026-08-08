@@ -11,6 +11,7 @@
     "sim:synthl1": "python simulation/synthl1/recursive_qe_mev.py",
     "sim:synthl1:gradient": "python simulation/synthl1/reserve_gradient_v6.py",
     "sim:synthl1:v13": "python simulation/synthl1/stateful_gradient_graph_v13.py",
+    "stress:synthl1:v13": "python simulation/synthl1/v13_10x50_stress.py",
     "audit:synthl1": "python simulation/synthl1/economic_audit.py",
     "audit:synthl1:v52": "python simulation/synthl1/system_audit_v52.py",
     "fork:preflight": "hardhat run scripts/fork_preflight.js --network hardhat",

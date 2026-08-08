@@ -25,35 +25,45 @@ docs/               Architecture and audit documents
 scripts/            Deployment and testing scripts
 ```
 
-## SynthL1 V6 — self-created reserve-gradient / adaptive MEV engine
+## SynthL1 V13.1 — self-created reserve-gradient / HardNAV-gated MEV engine
 
 The integrated module lives under [`contracts/synthl1/`](contracts/synthl1/README.md).
-It restores the V12/V13 edge-initiation core and combines it with the later realized-profit MEV tax and accounting hardening.
+It restores the V12/V13 edge-initiation core and combines it with realized-profit MEV capture, multi-asset accounting and an atomic post-trade HardNAV gate.
 
-Exact recursive cycle:
+Exact runtime cycle:
 
-`source synthetic burn -> equal destination synthetic mint -> self-created graph gradient -> external searcher route -> tax on realized arb profit -> exact synthetic target restore -> physical tax reinvestment -> repeat`.
+`source synthetic burn -> equal destination synthetic mint -> self-created graph gradient -> external searcher route -> realized-profit tax -> post-trade HardNAV check -> exact synthetic restore -> captured-quote reinvestment -> close/rotate -> repeat`.
 
-The initial and restored gradient operations are supply-neutral: the controlled synthetic total supply must not change. Searchers supply their own route principal. The protocol can reinvest only assets physically received by `MEVCaptureReinvestor`.
+The protocol does **not** wait for a pre-existing profitable external arbitrage before initiating the gradient. The corrected V13.1 model separates oracle marks from venue prices and shows the useful regime precisely: a supply-neutral gradient can make a small, cycle-consistent cross-venue basis executable even when the same basis is below the no-gradient multi-leg fee hurdle.
+
+A perfectly aligned mark==venue market is a negative control. Raw solver profit created only by the protocol gradient is rejected when protocol HardNAV would fall.
+
+Corrected deterministic reference with a sub-threshold venue vector:
+
+- no profitable no-gradient route;
+- 4 HardNAV-positive rotated gradient cycles;
+- protocol HardNAV: **+0.204687 USD**;
+- external LP delta: **-0.221851 USD**;
+- solver reward: **+0.017164 USD**;
+- conservation error approximately zero.
+
+The earlier V13 `+1.28 USD` result based on mismatched valuation vectors has been rejected and removed from the current audit.
+
+Managed gradient pools are 100% protocol LP-owned, reject third-party LP additions, and gate **both swap directions** through `GraphArbExecutor`. Searchers fund their own route principal. The executor taxes only realized profit and can atomically require `SystemAccounting.consolidatedHardNAV1e18()` to increase before the transaction is allowed to complete.
 
 The existing root-level `GraphPolicy`, `GraphTreasury`, `OrderflowAuction`, `SecureFlashExecutor`, and `TimelockedMultisig` remain the outer policy/security/solver layer rather than being duplicated inside SynthL1.
 
-Run the new reference models with:
+Run the reference models and focused tests with:
 
 ```bash
 npm run sim:synthl1:gradient
 npm run sim:synthl1:v13
-```
-
-Run the focused invariant tests with:
-
-```bash
 npm run test:synthl1
 npm run test:synthl1:evm
 ```
 
-The V6 audit is in [`docs/SYNTHL1_V6_RESERVE_GRADIENT_AUDIT.md`](docs/SYNTHL1_V6_RESERVE_GRADIENT_AUDIT.md).
-The example external graph configuration remains in [`solver/synthl1/market-graph.example.json`](solver/synthl1/market-graph.example.json). Aggregator quotes are discovery/execution inputs only; on-chain execution still enforces allowlisted targets, minimum outputs and actual balance-delta realized-profit checks.
+The corrected audit is in [`docs/SYNTHL1_V6_RESERVE_GRADIENT_AUDIT.md`](docs/SYNTHL1_V6_RESERVE_GRADIENT_AUDIT.md).
+The example external graph configuration remains in [`solver/synthl1/market-graph.example.json`](solver/synthl1/market-graph.example.json).
 
 ## Security
 
@@ -67,7 +77,7 @@ Before any mainnet deployment:
 4. Use a fresh deployment wallet.
 5. Configure timelock, oracle/reporters, guardian and risk limits.
 
-Status: architecture, deterministic stateful simulation and integration-test stage. Fresh V6 compiler/fork execution is still a required deployment gate.
+Status: architecture, corrected deterministic stateful simulation and integration-test stage. Fresh Solidity compiler/EVM/fork execution is still a required deployment gate.
 
 The four-contract growth-cycle prototype and its economic limitations are
 documented in [`docs/SELF_SUSTAINING_GRAPH_DESIGN.md`](docs/SELF_SUSTAINING_GRAPH_DESIGN.md).

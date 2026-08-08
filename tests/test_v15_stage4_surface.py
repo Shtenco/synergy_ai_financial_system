@@ -1,5 +1,4 @@
 import pathlib
-import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -18,11 +17,31 @@ class V15Stage4SurfaceTests(unittest.TestCase):
             "oracleValidationReady",
             "oracleValidationCoversAllAssets",
             "canonicalPrice1e18",
+            "function price1e18(address token)",
             "primary < secondary ? primary : secondary",
         ]:
             self.assertIn(needle, text)
         self.assertIn("if (validationOracleFrozen) revert Frozen()", text)
         self.assertIn("validator == oracle", text)
+
+    def test_risk_oracle_has_one_way_validated_economic_anchor(self):
+        text = (V15 / "V15RiskOracle.sol").read_text()
+        for needle in [
+            "validatedCanonicalAnchor",
+            "validatedCanonicalAnchorFrozen",
+            "setValidatedCanonicalAnchor",
+            "validatedAnchorReady",
+            "oracleValidationReady",
+            "if (validatedCanonicalAnchorFrozen) revert Frozen()",
+        ]:
+            self.assertIn(needle, text)
+
+    def test_controller_requires_both_economic_and_risk_validation_for_expansion(self):
+        text = (V15 / "V15SolvencyController.sol").read_text()
+        self.assertIn("_economicOracleReady()", text)
+        self.assertIn("_riskOracleReady()", text)
+        self.assertIn("riskOracle.validatedAnchorReady()", text)
+        self.assertIn("(mode == Mode.GREEN || mode == Mode.YELLOW)", text)
 
     def test_engine_registration_requires_complete_validated_accounting(self):
         text = (V15 / "V15AccountingAdapter.sol").read_text()

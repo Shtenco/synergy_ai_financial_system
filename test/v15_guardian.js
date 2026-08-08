@@ -23,6 +23,7 @@ describe("V15 guardian emergency stop", function () {
     const [owner, guardian] = await ethers.getSigners();
     const usdc = await deploy("MockERC20V6", "USDC", "USDC", 18);
     const oracle = await deploy("PriceOracleHub", owner.address);
+    const validationOracle = await deploy("PriceOracleHub", owner.address);
     const liabilities = await deploy("V15LiabilityRegistry", owner.address);
     const ledger = await deploy(
       "V15EconomicLedger", owner.address, await oracle.getAddress(), await liabilities.getAddress()
@@ -31,8 +32,13 @@ describe("V15 guardian emergency stop", function () {
 
     await (await usdc.mint(owner.address, E(200))).wait();
     await (await oracle.updatePrice(await usdc.getAddress(), E(1))).wait();
+    await (await validationOracle.updatePrice(await usdc.getAddress(), E(1))).wait();
     await (await ledger.addHardAsset(await usdc.getAddress())).wait();
     await (await ledger.setHardAccount(await usdc.getAddress(), owner.address, true)).wait();
+    await (await ledger.setValidationOracle(await validationOracle.getAddress(), true)).wait();
+    await (await risk.setValidatedCanonicalAnchor(await ledger.getAddress(), true)).wait();
+    assert.equal(await risk.validatedAnchorReady(), true);
+
     const id = ethers.keccak256(ethers.toUtf8Bytes("LIABILITY"));
     await (await liabilities.addLiability(id, 18, E(1), 10000, ethers.ZeroAddress, E(100))).wait();
     await (await risk.setHaircut(await usdc.getAddress(), 10000)).wait();

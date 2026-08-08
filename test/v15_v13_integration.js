@@ -113,8 +113,10 @@ async function fixture(bHaircutBps = 10000) {
 
   const liabilityId = ethers.keccak256(ethers.toUtf8Bytes("EXTERNAL_USDX"));
   await (await liabilities.addLiability(liabilityId, 18, E(1), 10000, ethers.ZeroAddress, E(100))).wait();
-  await (await risk.setRiskData(await tokenA.getAddress(), E(1), E(1), 10000)).wait();
-  await (await risk.setRiskData(await tokenB.getAddress(), E(1), E(1), bHaircutBps)).wait();
+  await (await risk.setHaircut(await tokenA.getAddress(), 10000)).wait();
+  await (await risk.setHaircut(await tokenB.getAddress(), bHaircutBps)).wait();
+  await (await risk.setRiskData(await tokenA.getAddress(), E(1), E(1))).wait();
+  await (await risk.setRiskData(await tokenB.getAddress(), E(1), E(1))).wait();
   await (await risk.addScenario(ethers.encodeBytes32String("BASE"), 10000, 0)).wait();
   await (await risk.setScenarioAsset(0, await tokenA.getAddress(), 10000, 10000)).wait();
   await (await risk.setScenarioAsset(0, await tokenB.getAddress(), 10000, 10000)).wait();

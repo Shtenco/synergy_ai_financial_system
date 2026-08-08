@@ -20,6 +20,7 @@ interface IV15RiskOracleView {
     function scenarioRiskValue1e18(address token, uint256 amount, uint8 decimals_, uint256 id) external view returns (uint256);
     function scenarioCount() external view returns (uint256);
     function scenarioInfo(uint256 id) external view returns (bytes32, uint16 liabilityStressBps, uint256 fixedCost1e18, bool enabled);
+    function validatedAnchorReady() external view returns (bool);
 }
 
 /// @notice Stateful V15 solvency brain with hysteresis and independent emergency stop.
@@ -239,6 +240,10 @@ contract V15SolvencyController {
         return ledger.oracleValidationCoversAllAssets();
     }
 
+    function _riskOracleReady() internal view returns (bool) {
+        return riskOracle.validatedAnchorReady();
+    }
+
     /// @notice Survival solvency. During bootstrap this can still be observed before
     /// validation-oracle freeze. Permission to expand/distribute is stricter.
     function routeSolvent() public view returns (bool) {
@@ -251,9 +256,9 @@ contract V15SolvencyController {
     }
 
     /// @notice New V13.1 searcher exploitation is permitted only in GREEN/YELLOW,
-    /// with independent Economic oracle validation frozen and fresh.
+    /// with both Economic and Risk canonical validation frozen and fresh.
     function searcherRouteAllowed() public view returns (bool) {
-        return !emergencyPaused && _economicOracleReady() &&
+        return !emergencyPaused && _economicOracleReady() && _riskOracleReady() &&
             (mode == Mode.GREEN || mode == Mode.YELLOW) && routeSolvent();
     }
 
@@ -262,7 +267,7 @@ contract V15SolvencyController {
     }
 
     function maxGradientShiftBps() external view returns (uint16) {
-        if (emergencyPaused || !_economicOracleReady()) return 0;
+        if (emergencyPaused || !_economicOracleReady() || !_riskOracleReady()) return 0;
         if (mode == Mode.GREEN) return thresholds.greenGradientShiftBps;
         if (mode == Mode.YELLOW) return thresholds.yellowGradientShiftBps;
         return 0;
@@ -272,7 +277,7 @@ contract V15SolvencyController {
     /// while still preserving HardNAV floor, distribution K/STS floors and the
     /// absolute risk-capital floor. Concentration remains a post-transfer gate.
     function distributionHeadroom1e18() public view returns (uint256 headroom) {
-        if (emergencyPaused || mode != Mode.GREEN || !_economicOracleReady()) return 0;
+        if (emergencyPaused || mode != Mode.GREEN || !_economicOracleReady() || !_riskOracleReady()) return 0;
         (int256 nav, uint256 riskAssets, uint256 riskLiabilities,,) = metrics();
         if (nav <= minHardNAV1e18 || !_portfolioLimitsSatisfied(riskAssets)) return 0;
 

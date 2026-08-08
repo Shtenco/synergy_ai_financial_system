@@ -16,6 +16,10 @@ interface IV15CoverageAdapter {
     function currentCoverageBps() external view returns (uint256);
 }
 
+interface IV15GradientActiveView {
+    function active() external view returns (bool);
+}
+
 /// @notice Dual compatibility layer for frozen V13.1 GraphArbExecutor AND
 /// ReserveGradientEngine. Naming keeps the frozen USDx ABI, while V15 treats
 /// these mappings generically as own-synthetic protocol accounts/pools.
@@ -28,9 +32,11 @@ contract V15AccountingAdapter {
 
     mapping(address => bool) public syntheticProtocolAccount;
     mapping(address => bool) public syntheticPoolAccount;
+    mapping(address => bool) public registeredGradientEngine;
 
     event SyntheticProtocolAccountSet(address indexed account, bool enabled);
     event SyntheticPoolAccountSet(address indexed account, bool enabled);
+    event GradientEngineRegistered(address indexed engine, bool enabled);
     error Unauthorized();
     error BadConfig();
 
@@ -61,6 +67,12 @@ contract V15AccountingAdapter {
         emit SyntheticPoolAccountSet(account, enabled);
     }
 
+    function setGradientEngine(address engine, bool enabled) external onlyOwner {
+        if (engine == address(0)) revert BadConfig();
+        registeredGradientEngine[engine] = enabled;
+        emit GradientEngineRegistered(engine, enabled);
+    }
+
     /// @dev Frozen executor calls this both pre- and post-route. If post-route
     /// K/STS is unsafe, the gate reverts and the full route rolls back atomically.
     function consolidatedHardNAV1e18() external view returns (int256) {
@@ -69,7 +81,25 @@ contract V15AccountingAdapter {
     }
 
     function economicHardNAV1e18() external view returns (int256) { return ledger.hardNAV1e18(); }
-    function externalCoverageBps() external view returns (uint256) { return controller.currentCoverageBps(); }
+
+    /// @notice Frozen ReserveGradientEngine calls this before initialize and before
+    /// restore. Initialization occurs while engine.active()==false and therefore
+    /// receives the REAL coverage. During an already-active gradient, the only
+    /// frozen callsite that asks coverage is restoreGradient(); restore is an exact
+    /// supply-neutral synthetic relocation and moves no hard assets, so it must
+    /// remain available even in RED emergency mode.
+    function externalCoverageBps() external view returns (uint256) {
+        if (registeredGradientEngine[msg.sender]) {
+            bool isActive;
+            try IV15GradientActiveView(msg.sender).active() returns (bool active_) {
+                isActive = active_;
+            } catch {
+                return controller.currentCoverageBps();
+            }
+            if (isActive) return type(uint256).max;
+        }
+        return controller.currentCoverageBps();
+    }
 
     // Frozen V13.1 compatibility names.
     function isProtocolUSDxAccount(address account) external view returns (bool) { return syntheticProtocolAccount[account]; }

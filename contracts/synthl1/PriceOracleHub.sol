@@ -1,26 +1,31 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @notice Consensus-facing executable-price root.
-/// In production, validator consensus / signed attestations feed this contract/module.
+/// @notice Consensus-facing USD price hub for the multi-asset SynthL1 graph.
+/// Prices are 1e18 USD per whole token. In a production L1, reporters should be
+/// replaced/controlled by validator consensus, signed attestations or hardened adapters.
 contract PriceOracleHub {
+    struct PriceData {
+        uint192 price1e18;
+        uint64 updatedAt;
+    }
+
     address public owner;
     mapping(address => bool) public reporter;
-
-    uint256 public internalCorePrice1e18;
-    uint256 public externalCorePrice1e18;
-    uint64 public updatedAt;
+    mapping(address => PriceData) private priceData;
     uint32 public maxAge = 60;
 
     event ReporterSet(address indexed reporter, bool allowed);
-    event PricesUpdated(uint256 internalPrice, uint256 externalPrice, uint64 timestamp);
+    event PriceUpdated(address indexed token, uint256 price1e18, uint64 timestamp);
     event MaxAgeSet(uint32 maxAge);
 
     error Unauthorized();
     error BadPrice();
-    error Stale();
+    error StalePrice(address token);
+    error BadConfig();
 
     constructor(address owner_) {
+        if (owner_ == address(0)) revert BadConfig();
         owner = owner_;
         reporter[owner_] = true;
     }
@@ -29,6 +34,7 @@ contract PriceOracleHub {
     modifier onlyReporter() { if (!reporter[msg.sender]) revert Unauthorized(); _; }
 
     function setReporter(address who, bool allowed) external onlyOwner {
+        if (who == address(0)) revert BadConfig();
         reporter[who] = allowed;
         emit ReporterSet(who, allowed);
     }
@@ -39,23 +45,34 @@ contract PriceOracleHub {
         emit MaxAgeSet(age);
     }
 
-    function updatePrices(uint256 internalPrice, uint256 externalPrice) external onlyReporter {
-        if (internalPrice == 0 || externalPrice == 0) revert BadPrice();
-        internalCorePrice1e18 = internalPrice;
-        externalCorePrice1e18 = externalPrice;
-        updatedAt = uint64(block.timestamp);
-        emit PricesUpdated(internalPrice, externalPrice, uint64(block.timestamp));
+    function updatePrice(address token, uint256 price) external onlyReporter {
+        _update(token, price);
     }
 
-    function requireFresh() public view {
-        if (updatedAt == 0 || block.timestamp > uint256(updatedAt) + maxAge) revert Stale();
+    function updatePrices(address[] calldata tokens, uint256[] calldata prices) external onlyReporter {
+        uint256 n = tokens.length;
+        if (n == 0 || n != prices.length || n > 32) revert BadConfig();
+        for (uint256 i = 0; i < n; ++i) _update(tokens[i], prices[i]);
     }
 
-    function basisBps() external view returns (int256) {
-        requireFresh();
-        uint256 i = internalCorePrice1e18;
-        uint256 e = externalCorePrice1e18;
-        if (e >= i) return int256(((e - i) * 10_000) / i);
-        return -int256(((i - e) * 10_000) / e);
+    function price1e18(address token) external view returns (uint256) {
+        PriceData memory p = priceData[token];
+        if (p.price1e18 == 0 || block.timestamp > uint256(p.updatedAt) + maxAge) {
+            revert StalePrice(token);
+        }
+        return uint256(p.price1e18);
+    }
+
+    function rawPrice(address token) external view returns (uint256 price, uint64 updatedAt, bool fresh) {
+        PriceData memory p = priceData[token];
+        price = uint256(p.price1e18);
+        updatedAt = p.updatedAt;
+        fresh = price != 0 && block.timestamp <= uint256(updatedAt) + maxAge;
+    }
+
+    function _update(address token, uint256 price) internal {
+        if (token == address(0) || price == 0 || price > type(uint192).max) revert BadPrice();
+        priceData[token] = PriceData(uint192(price), uint64(block.timestamp));
+        emit PriceUpdated(token, price, uint64(block.timestamp));
     }
 }

@@ -102,28 +102,48 @@ describe("V15 economic/risk overlay", function () {
     await mustRevert(c.adapter.consolidatedHardNAV1e18(), "unsafe route state must fail closed");
   });
 
-  it("requires both HWM profit and physically swept eligible protocol revenue", async function () {
+  it("requires HWM profit, eligible revenue, and automatic solvency headroom", async function () {
     const c = await setup();
     const router = await revenueRouter(c);
     await (await router.setRevenueSource(c.owner.address, true)).wait();
     await (await router.startPeriod()).wait();
 
-    // Fixture realized hard gain appears first in an already-accounted protocol source.
     await (await c.usdc.mint(c.owner.address, E(20))).wait();
     await (await c.usdc.approve(await router.getAddress(), E(20))).wait();
-    await (await router.recordEligibleRevenueToken(
-      await c.usdc.getAddress(), c.owner.address, E(20)
-    )).wait();
+    await (await router.recordEligibleRevenueToken(await c.usdc.getAddress(), c.owner.address, E(20))).wait();
 
     assert.equal(await router.eligibleRevenue1e18(), E(20));
-    await (await router.settlePeriod(E(5))).wait();
-    assert.equal(await router.distributableBudget1e18(), E(15));
+    assert.ok((await c.controller.distributionHeadroom1e18()) >= E(20));
+    await (await router.settlePeriod()).wait();
+    assert.equal(await router.distributableBudget1e18(), E(20));
 
     await (await router.distribute(await c.usdc.getAddress(), c.outsider.address, E(10))).wait();
-    assert.equal(await c.usdc.balanceOf(c.outsider.address), E(10));
     await mustRevert(
-      router.distribute(await c.usdc.getAddress(), c.outsider.address, E(6)),
-      "cannot exceed dual-gated hard-profit budget"
+      router.distribute(await c.usdc.getAddress(), c.outsider.address, E(11)),
+      "cannot exceed automatically derived hard-profit budget"
+    );
+  });
+
+  it("automatic absolute-capital headroom can bind distribution below eligible profit", async function () {
+    const c = await setup();
+    const router = await revenueRouter(c);
+    await (await router.setRevenueSource(c.owner.address, true)).wait();
+    await (await router.startPeriod()).wait();
+
+    await (await c.usdc.mint(c.owner.address, E(50))).wait();
+    await (await c.usdc.approve(await router.getAddress(), E(50))).wait();
+    await (await router.recordEligibleRevenueToken(await c.usdc.getAddress(), c.owner.address, E(50))).wait();
+    // Risk assets are now 250. Requiring 230 leaves at most 20 canonical USD
+    // under the conservative 1 hard USD -> up to 1 risk USD assumption.
+    await (await c.controller.setPortfolioLimits(E(230), 10000)).wait();
+    assert.equal(await c.controller.distributionHeadroom1e18(), E(20));
+    await (await router.settlePeriod()).wait();
+    assert.equal(await router.distributableBudget1e18(), E(20));
+
+    await (await router.distribute(await c.usdc.getAddress(), c.outsider.address, E(19))).wait();
+    await mustRevert(
+      router.distribute(await c.usdc.getAddress(), c.outsider.address, E(1)),
+      "post-transfer capital floor must reject the final unit at the boundary"
     );
   });
 
@@ -136,7 +156,7 @@ describe("V15 economic/risk overlay", function () {
     await (await c.usdc.connect(c.outsider).transfer(c.owner.address, E(20))).wait();
     assert.equal(await c.ledger.hardNAV1e18(), E(120));
 
-    await (await router.settlePeriod(0)).wait();
+    await (await router.settlePeriod()).wait();
     assert.equal(await router.eligibleRevenue1e18(), 0n);
     assert.equal(await router.distributableBudget1e18(), 0n);
   });
@@ -148,12 +168,24 @@ describe("V15 economic/risk overlay", function () {
 
     await (await c.usdc.mint(c.outsider.address, E(20))).wait();
     await (await c.usdc.connect(c.outsider).approve(await router.getAddress(), E(20))).wait();
-    await (await router.recordContributionToken(
-      await c.usdc.getAddress(), c.outsider.address, E(20)
-    )).wait();
+    await (await router.recordContributionToken(await c.usdc.getAddress(), c.outsider.address, E(20))).wait();
 
     assert.equal(await router.contributions1e18(), E(20));
-    await (await router.settlePeriod(0)).wait();
+    await (await router.settlePeriod()).wait();
+    assert.equal(await router.distributableBudget1e18(), 0n);
+  });
+
+  it("settles crisis losses even when no distribution is allowed", async function () {
+    const c = await setup();
+    const router = await revenueRouter(c);
+    await (await router.startPeriod()).wait();
+
+    await (await c.usdc.transfer(c.outsider.address, E(100))).wait();
+    await (await c.controller.pokeMode()).wait();
+    assert.equal(await c.controller.distributionAllowed(), false);
+
+    await (await router.settlePeriod()).wait();
+    assert.equal(await router.lossCarryforward1e18(), E(100));
     assert.equal(await router.distributableBudget1e18(), 0n);
   });
 
@@ -164,7 +196,7 @@ describe("V15 economic/risk overlay", function () {
 
     await (await router.startPeriod()).wait();
     await (await c.usdc.transfer(c.outsider.address, E(20))).wait();
-    await (await router.settlePeriod(0)).wait();
+    await (await router.settlePeriod()).wait();
     assert.equal(await router.lossCarryforward1e18(), E(20));
     assert.equal(await router.distributableBudget1e18(), 0n);
     await (await router.closePeriod()).wait();
@@ -173,11 +205,9 @@ describe("V15 economic/risk overlay", function () {
     await (await c.usdc.connect(c.outsider).transfer(c.owner.address, E(20))).wait();
     await (await c.usdc.mint(c.owner.address, E(5))).wait();
     await (await c.usdc.approve(await router.getAddress(), E(5))).wait();
-    await (await router.recordEligibleRevenueToken(
-      await c.usdc.getAddress(), c.owner.address, E(5)
-    )).wait();
+    await (await router.recordEligibleRevenueToken(await c.usdc.getAddress(), c.owner.address, E(5))).wait();
 
-    await (await router.settlePeriod(0)).wait();
+    await (await router.settlePeriod()).wait();
     assert.equal(await router.lossCarryforward1e18(), 0n);
     assert.equal(await router.distributableBudget1e18(), E(5));
   });

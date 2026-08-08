@@ -9,52 +9,91 @@ spec.loader.exec_module(mod)
 
 
 class SynthL1StatefulGradientGraphV13Tests(unittest.TestCase):
-    def test_consistent_external_graph_has_no_standalone_marginal_cycle(self):
-        multipliers = {
+    def setUp(self):
+        self.aligned = {t: 1.0 for t in mod.TOKENS}
+        self.latent = {
             "USDT": 1.000,
-            "USDC": 0.995,
-            "DAI": 1.005,
-            "WPOL": 1.020,
-            "WETH": 0.980,
+            "USDC": 0.998,
+            "DAI": 1.002,
+            "WPOL": 1.003,
+            "WETH": 0.997,
         }
-        external = mod.make_external(multipliers)
+
+    def test_cycle_consistent_external_graph_has_no_standalone_marginal_cycle(self):
+        venue = mod.price_vector(self.latent)
+        external = mod.make_external(venue)
         self.assertLess(mod.external_cycle_upper_bound(external), 1.0)
 
-    def test_aligned_graph_is_negative_control_but_multi_exploitable(self):
-        rows, _, _, cycle_bound = mod.run_stateful({t: 1.0 for t in mod.TOKENS})
+    def test_aligned_mark_and_venue_vector_rejects_self_funded_hardnav_profit(self):
+        rows, cycle_bound = mod.run_rotation(
+            mark_multiplier=self.aligned,
+            venue_multiplier=self.aligned,
+            cycles=3,
+            principal_steps=40,
+            shifts=(10, 25, 40, 50),
+        )
         self.assertLess(cycle_bound, 1.0)
-        self.assertGreaterEqual(len(rows), 5)
-        self.assertLess(rows[-1].protocol_real_delta_usd, 0.0)
-        self.assertLess(abs(rows[-1].conservation_error_usd), 1e-6)
+        self.assertEqual(rows, [])
 
-    def test_self_created_gradient_unlocks_positive_protocol_delta_in_consistent_basis_graph(self):
-        multipliers = {
+    def test_nonflat_market_vector_is_not_profit_when_marks_match_the_same_market(self):
+        # Regression for the old V13 valuation bug: previously the external graph
+        # used this non-flat vector while protocol NAV was still marked at BASE_USD.
+        market = {
             "USDT": 1.000,
             "USDC": 0.995,
             "DAI": 1.005,
             "WPOL": 1.020,
             "WETH": 0.980,
         }
-        rows, source, destination, cycle_bound = mod.run_stateful(multipliers)
-        self.assertLess(cycle_bound, 1.0)  # no standalone external marginal arb cycle
-        self.assertGreaterEqual(len(rows), 5)
-        self.assertNotEqual(source, destination)
-        self.assertGreater(rows[-1].protocol_real_delta_usd, 0.0)
-        self.assertGreater(sum(x.protocol_tax_usd for x in rows), 0.0)
-        self.assertLess(abs(rows[-1].conservation_error_usd), 1e-6)
+        rows, cycle_bound = mod.run_rotation(
+            mark_multiplier=market,
+            venue_multiplier=market,
+            cycles=3,
+            principal_steps=40,
+            shifts=(10, 25, 40, 50),
+        )
+        self.assertLess(cycle_bound, 1.0)
+        self.assertEqual(rows, [])
 
-    def test_state_is_carried_forward_not_independent_snapshots(self):
-        multipliers = {
-            "USDT": 1.000,
-            "USDC": 0.995,
-            "DAI": 1.005,
-            "WPOL": 1.020,
-            "WETH": 0.980,
-        }
-        rows, _, _, _ = mod.run_stateful(multipliers)
+    def test_subthreshold_basis_has_no_profitable_route_before_gradient(self):
+        marks = mod.price_vector(self.aligned)
+        venue = mod.price_vector(self.latent)
+        baseline = mod.best_no_gradient_route(
+            mod.make_internal(marks),
+            mod.make_external(venue),
+            marks,
+            principal_steps=60,
+        )
+        self.assertIsNone(baseline)
+
+    def test_gradient_rotation_unlocks_positive_hardnav_from_subthreshold_basis(self):
+        rows, cycle_bound = mod.run_rotation(
+            mark_multiplier=self.aligned,
+            venue_multiplier=self.latent,
+            external_side_value_usd=100_000.0,
+            cycles=8,
+            principal_steps=60,
+            shifts=(5, 10, 15, 20, 25, 30, 40, 50),
+        )
+        self.assertLess(cycle_bound, 1.0)
+        self.assertGreaterEqual(len(rows), 3)
+        self.assertGreater(rows[-1].protocol_cumulative_usd, 0.0)
+        self.assertLess(rows[-1].external_cumulative_usd, 0.0)
+        self.assertGreater(rows[-1].solver_cumulative_usd, 0.0)
+        self.assertLess(max(abs(r.conservation_error_usd) for r in rows), 1e-6)
+        self.assertTrue(all(r.protocol_increment_usd > 0.0 for r in rows))
+
+    def test_rotation_carries_state_forward(self):
+        rows, _ = mod.run_rotation(
+            mark_multiplier=self.aligned,
+            venue_multiplier=self.latent,
+            cycles=4,
+            principal_steps=50,
+            shifts=(5, 15, 25, 40, 50),
+        )
         self.assertGreaterEqual(len(rows), 2)
-        # External LP delta and cumulative solver reward must evolve between cycles.
-        self.assertNotEqual(rows[0].external_lp_delta_usd, rows[1].external_lp_delta_usd)
+        self.assertGreater(rows[1].protocol_cumulative_usd, rows[0].protocol_cumulative_usd)
+        self.assertNotEqual(rows[0].source + rows[0].destination, "")
         self.assertGreater(rows[1].solver_cumulative_usd, rows[0].solver_cumulative_usd)
 
 

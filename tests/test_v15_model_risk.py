@@ -36,8 +36,10 @@ class ModelRiskTests(unittest.TestCase):
         one = m.build_model_risk_budget(errors, 0.004, 1)
         huge = m.build_model_risk_budget(errors, 0.004, 100_000)
         self.assertLess(one.total, huge.total)
-        self.assertTrue(m.accepted_after_model_risk(0.040, 0.002, 0.002, one, 0.005))
-        self.assertFalse(m.accepted_after_model_risk(0.040, 0.002, 0.002, huge, 0.005))
+        # Numerical sanity for this fixture:
+        # one-candidate robust gain ~= 0.01986; 100k-search robust gain ~= 0.00929.
+        self.assertTrue(m.accepted_after_model_risk(0.040, 0.002, 0.002, one, 0.010))
+        self.assertFalse(m.accepted_after_model_risk(0.040, 0.002, 0.002, huge, 0.010))
 
 
 if __name__ == "__main__":

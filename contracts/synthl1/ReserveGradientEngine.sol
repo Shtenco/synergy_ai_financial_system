@@ -10,6 +10,10 @@ interface IUSDxGradient {
     function balanceOf(address account) external view returns (uint256);
 }
 
+interface IGradientExecutorRegistry {
+    function protocolTarget(address target) external view returns (bool);
+}
+
 interface IGraphPoolGradient {
     function token0() external view returns (address);
     function token1() external view returns (address);
@@ -46,8 +50,8 @@ interface IAccountingGradient {
 ///   2. burn it;
 ///   3. mint the exact same amount into destination pool;
 ///   4. searchers exploit the resulting cross-pool/cross-asset gradient through
-///      GraphArbExecutor, which taxes REALIZED arbitrage profit and can enforce a
-///      post-trade consolidated HardNAV increase;
+///      GraphArbExecutor, which taxes REALIZED arbitrage profit and enforces a
+///      post-trade consolidated HardNAV increase with an oracle-error buffer;
 ///   5. restore the exact synthetic reserve targets by another equal burn/mint shift;
 ///   6. reinvest physically captured quote assets into selected protocol pools;
 ///   7. exploit the gradient again or rotate it.
@@ -334,7 +338,13 @@ contract ReserveGradientEngine {
         if (total == 0 || p.shares(protocolLiquidityOwner) != total) revert PoolNotManaged();
         if (!p.restrictLiquidityProviders() || p.liquidityManager() != protocolLiquidityOwner) revert PoolNotManaged();
         if (p.gradientController() != address(this)) revert PoolNotManaged();
-        if (!p.executorOnlyAllSwaps() || p.arbExecutor() == address(0)) revert PoolNotManaged();
+
+        address executor = p.arbExecutor();
+        if (!p.executorOnlyAllSwaps() || executor == address(0)) revert PoolNotManaged();
+        // Ensures the executor's oracle-error turnover buffer cannot silently omit
+        // this managed internal pool.
+        if (!IGradientExecutorRegistry(executor).protocolTarget(pool)) revert PoolNotManaged();
+
         if (!accounting.isProtocolUSDxPoolAccount(pool)) revert AccountingNotConfigured();
         if (accounting.protocolLiquidityOwner() != protocolLiquidityOwner) revert AccountingNotConfigured();
         if (!accounting.isProtocolUSDxAccount(address(capture))) revert AccountingNotConfigured();

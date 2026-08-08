@@ -64,9 +64,10 @@ class AccountSpec:
         if self.liquid_haircut > self.economic_haircut + 1e-12:
             raise LedgerError("liquid_haircut cannot exceed economic_haircut")
         if self.account_class != AccountClass.ASSET:
-            if any(abs(getattr(self, field_name)) > 1e-12 for field_name in (
-                "hard_haircut", "liquid_haircut", "economic_haircut"
-            )):
+            if any(
+                abs(getattr(self, field_name)) > 1e-12
+                for field_name in ("hard_haircut", "liquid_haircut", "economic_haircut")
+            ):
                 raise LedgerError("valuation haircuts belong only to ASSET accounts")
         if self.immediate_liability and self.account_class != AccountClass.LIABILITY:
             raise LedgerError("immediate_liability is valid only for LIABILITY accounts")
@@ -110,9 +111,9 @@ class JournalEntry:
 class CanonicalDoubleEntryLedger:
     """Append-only reporting-currency ledger for monetary truth.
 
-    The ledger stores reconciled book values in one reporting unit. External
-    quantities and market data must be valued before posting. Browser prices,
-    self-token marks and virtual TVL therefore cannot silently become profit.
+    Every economic event is journalled in one reporting unit. External market
+    data must be reconciled before posting, so browser prices, own-token marks,
+    virtual TVL and internal transfers cannot silently become HardNAV or profit.
     """
 
     def __init__(self, reporting_unit: str = "KZT") -> None:
@@ -222,6 +223,26 @@ class CanonicalDoubleEntryLedger:
                 total += line.debit
         return total
 
+    def _external_value_received(self, entry: JournalEntry) -> Decimal:
+        """Value received from outside the consolidated system.
+
+        Revenue can arrive as a hard external asset debit *or* as an authorised
+        extinguishment of an external liability (for example a MetaPay fee paid
+        in SYNT). Internal income reclassifications without either leg count as
+        zero external value even if they credit an income account.
+        """
+
+        total = ZERO
+        for line in entry.lines:
+            spec = self.account(line.account_id)
+            if not spec.external:
+                continue
+            if spec.account_class == AccountClass.ASSET:
+                total += line.debit
+            elif spec.account_class == AccountClass.LIABILITY:
+                total += line.debit
+        return total
+
     def net_new_capital_since(self, sequence: int) -> float:
         total = ZERO
         for entry in self.entries_since(sequence):
@@ -233,7 +254,7 @@ class CanonicalDoubleEntryLedger:
         total = ZERO
         for entry in self.entries_since(sequence):
             if entry.flow_type == FlowType.EXTERNAL_REVENUE:
-                total += self._external_asset_debits(entry)
+                total += self._external_value_received(entry)
         return float(total)
 
     def immediate_hard_liabilities(self) -> float:

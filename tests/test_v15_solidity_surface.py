@@ -33,6 +33,14 @@ class V15SoliditySurfaceTests(unittest.TestCase):
         self.assertIn("hardNAV1e18", text)
         self.assertIn("everHardAccount", text)
 
+    def test_manual_liabilities_fail_closed_when_stale(self):
+        text = (V15 / "V15LiabilityRegistry.sol").read_text()
+        self.assertIn("manualUpdatedAt", text)
+        self.assertIn("manualMaxAge", text)
+        self.assertIn("StaleLiability", text)
+        self.assertIn("block.timestamp > uint256(c.manualUpdatedAt) + uint256(manualMaxAge)", text)
+        self.assertRegex(text, r"function setManualMaxAge\(")
+
     def test_risk_oracle_separates_reporter_marks_from_owner_haircut(self):
         text = (V15 / "V15RiskOracle.sol").read_text()
         self.assertRegex(text, r"function setHaircut\([^)]*\) external onlyOwner")
@@ -49,6 +57,13 @@ class V15SoliditySurfaceTests(unittest.TestCase):
             self.assertRegex(text, rf"function {name}\b")
         self.assertRegex(text, r"address public immutable protocolLiquidityOwner")
         self.assertIn("gate.assertRouteState();", text)
+
+    def test_gradient_engine_requires_irreversible_synthetic_exclusion(self):
+        text = (V15 / "V15AccountingAdapter.sol").read_text()
+        self.assertIn("ledger.permanentlyExcludedAsset(synthetic)", text)
+        self.assertIn("ledger.isHardAsset(synthetic)", text)
+        self.assertIn("SyntheticNotPermanentlyExcluded", text)
+        self.assertIn("IV15GradientActiveView(engine).usdx()", text)
 
     def test_active_registered_gradient_can_restore_even_if_coverage_is_below_normal_floor(self):
         text = (V15 / "V15AccountingAdapter.sol").read_text()
@@ -68,6 +83,14 @@ class V15SoliditySurfaceTests(unittest.TestCase):
         self.assertIn("maxSingleAssetConcentrationBps", text)
         self.assertRegex(text, r"function searcherRouteAllowed\(\)")
         self.assertIn("mode == Mode.GREEN || mode == Mode.YELLOW", text)
+
+    def test_revenue_uses_physical_contributions_and_no_manual_withdrawal_addback(self):
+        text = (V15 / "V15RevenueRouter.sol").read_text()
+        self.assertIn("recordContributionToken", text)
+        self.assertIn("safeTransferFrom(from, address(this), amount)", text)
+        self.assertIn("afterBalance - beforeBalance", text)
+        self.assertNotIn("recordWithdrawal1e18", text)
+        self.assertNotIn("withdrawals1e18", text)
 
     def test_revenue_has_single_settlement_loss_carryforward_and_accounted_custody(self):
         text = (V15 / "V15RevenueRouter.sol").read_text()

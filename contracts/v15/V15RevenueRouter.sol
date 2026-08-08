@@ -20,10 +20,19 @@ interface IERC20V15Revenue {
 }
 
 /// @notice Hard-profit accounting and distribution router.
-/// Distribution requires BOTH HWM Economic HardNAV profit and physically swept
-/// eligible protocol revenue, then is capped by controller-derived solvency headroom.
+/// Distribution requires:
+/// 1. HWM Economic HardNAV profit after capital-flow adjustment/loss carry;
+/// 2. physically swept hard revenue from an allowlisted protocol contract;
+/// 3. a monotonic source-side evidence counter proving that the swept amount was
+///    actually recognized as fee/tax/service revenue by that source;
+/// 4. controller-derived solvency headroom.
 contract V15RevenueRouter {
     using SafeTransferLib for address;
+
+    struct RevenueSourceConfig {
+        bool enabled;
+        bytes4 cumulativeEvidenceSelector;
+    }
 
     address public owner;
     address public capitalFlowReporter;
@@ -38,13 +47,21 @@ contract V15RevenueRouter {
     uint256 public distributableBudget1e18;
     uint256 public distributed1e18;
     uint256 public lossCarryforward1e18;
-    mapping(address => bool) public revenueSource;
+
+    mapping(address => RevenueSourceConfig) public revenueSource;
+    mapping(address => mapping(address => uint256)) public recognizedRevenueUnits;
 
     event CapitalFlowReporterSet(address indexed reporter);
-    event RevenueSourceSet(address indexed source, bool enabled);
+    event RevenueSourceSet(address indexed source, bytes4 indexed evidenceSelector, bool enabled);
     event PeriodStarted(int256 startNAV1e18);
     event ContributionRecorded(address indexed token, address indexed from, uint256 amount, uint256 value1e18);
-    event EligibleRevenueRecorded(address indexed token, address indexed from, uint256 amount, uint256 value1e18);
+    event EligibleRevenueRecorded(
+        address indexed token,
+        address indexed from,
+        uint256 amount,
+        uint256 value1e18,
+        uint256 cumulativeEvidenceAfter
+    );
     event PeriodSettled(
         int256 operatingPnL1e18,
         uint256 eligibleRevenue1e18,
@@ -61,6 +78,7 @@ contract V15RevenueRouter {
     error BudgetExceeded();
     error UnaccountedCustody();
     error IneligibleRevenueSource();
+    error RevenueEvidenceInvalid();
 
     constructor(address owner_, address reporter_, address ledger_, address controller_) {
         if (owner_ == address(0) || reporter_ == address(0) || ledger_ == address(0) || controller_ == address(0)) {
@@ -81,10 +99,18 @@ contract V15RevenueRouter {
         emit CapitalFlowReporterSet(next);
     }
 
-    function setRevenueSource(address source, bool enabled) external onlyOwner {
+    /// @notice Configure a protocol CONTRACT as an eligible revenue source.
+    /// `evidenceSelector` must implement `selector(address token) -> uint256 cumulative`.
+    /// Example for frozen MEVCaptureReinvestor: `cumulativeCaptured(address)`.
+    function setRevenueSource(address source, bytes4 evidenceSelector, bool enabled) external onlyOwner {
         if (source == address(0)) revert BadConfig();
-        revenueSource[source] = enabled;
-        emit RevenueSourceSet(source, enabled);
+        if (enabled) {
+            if (source.code.length == 0 || evidenceSelector == bytes4(0)) revert BadConfig();
+            revenueSource[source] = RevenueSourceConfig(true, evidenceSelector);
+        } else {
+            revenueSource[source].enabled = false;
+        }
+        emit RevenueSourceSet(source, evidenceSelector, enabled);
     }
 
     function startPeriod() external onlyOwner {
@@ -99,6 +125,8 @@ contract V15RevenueRouter {
         emit PeriodStarted(periodStartNAV1e18);
     }
 
+    /// @notice Physically receives external investment/capital. It increases NAV
+    /// but is subtracted from operating PnL and never becomes revenue by itself.
     function recordContributionToken(address token, address from, uint256 amount)
         external onlyReporter returns (uint256 received, uint256 value1e18)
     {
@@ -115,31 +143,50 @@ contract V15RevenueRouter {
         emit ContributionRecorded(token, from, received, value1e18);
     }
 
+    /// @notice Sweeps already-protocol-owned realized hard revenue into this router.
+    /// The transfer is HardNAV-neutral because source and router are both accounted.
+    /// A direct token donation to the source is NOT eligible unless the source's
+    /// cumulative revenue evidence counter also increased.
     function recordEligibleRevenueToken(address token, address from, uint256 amount)
         external onlyReporter returns (uint256 received, uint256 value1e18)
     {
         if (!periodOpen || periodSettled || token == address(0) || from == address(0) || amount == 0) revert BadConfig();
-        if (!revenueSource[from]) revert IneligibleRevenueSource();
+        RevenueSourceConfig memory cfg = revenueSource[from];
+        if (!cfg.enabled) revert IneligibleRevenueSource();
         if (
             !ledger.isHardAsset(token) ||
             !ledger.isHardAccount(token, address(this)) ||
             !ledger.isHardAccount(token, from)
         ) revert UnaccountedCustody();
 
+        uint256 cumulative = _cumulativeRevenueEvidence(from, cfg.cumulativeEvidenceSelector, token);
+        uint256 recognized = recognizedRevenueUnits[from][token];
+        if (cumulative < recognized || amount > cumulative - recognized) revert RevenueEvidenceInvalid();
+
         uint256 beforeBalance = IERC20V15Revenue(token).balanceOf(address(this));
         token.safeTransferFrom(from, address(this), amount);
         uint256 afterBalance = IERC20V15Revenue(token).balanceOf(address(this));
         if (afterBalance <= beforeBalance) revert BadConfig();
         received = afterBalance - beforeBalance;
+
+        // Consume the gross source-side evidence amount. Fee-on-transfer loss, if
+        // any, can never be reused as eligible revenue in a later sweep.
+        recognizedRevenueUnits[from][token] = recognized + amount;
         value1e18 = ledger.markValue1e18(token, received);
         eligibleRevenue1e18 += value1e18;
-        emit EligibleRevenueRecorded(token, from, received, value1e18);
+        emit EligibleRevenueRecorded(token, from, received, value1e18, cumulative);
     }
 
-    /// @notice Accounting settlement is always allowed when the ledgers are readable,
-    /// even in RED. Crisis losses must enter loss carry-forward instead of being hidden.
-    /// Distribution budget itself is zero unless the controller reports positive GREEN
-    /// solvency headroom.
+    function _cumulativeRevenueEvidence(address source, bytes4 selector, address token)
+        internal view returns (uint256 cumulative)
+    {
+        (bool ok, bytes memory data) = source.staticcall(abi.encodeWithSelector(selector, token));
+        if (!ok || data.length < 32) revert RevenueEvidenceInvalid();
+        cumulative = abi.decode(data, (uint256));
+    }
+
+    /// @notice Accounting settlement is always allowed when ledgers are readable,
+    /// including RED. Crisis losses must enter loss carry-forward instead of hiding.
     function settlePeriod() external onlyOwner returns (int256 pnl, uint256 budget) {
         if (!periodOpen || periodSettled) revert BadConfig();
         int256 nowNav = ledger.hardNAV1e18();
@@ -183,6 +230,7 @@ contract V15RevenueRouter {
         distributed1e18 += value;
         token.safeTransfer(to, amount);
 
+        // Final post-transfer solvency gate. Revert rolls the transfer back.
         if (!controller.distributionAllowed()) revert InsolventDistribution();
         emit Distributed(token, to, amount, value);
     }

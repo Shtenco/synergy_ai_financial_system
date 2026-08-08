@@ -16,6 +16,11 @@ interface ICaptureGraphExec {
 /// A configurable tax is charged only on REALIZED base-token profit, never on
 /// principal or gross swap output.
 ///
+/// `profitTaxBps` is a ceiling. If applying that ceiling would leave less than
+/// `minSearcherReward[baseToken]`, the tax is automatically reduced so that a
+/// viable solver reward remains. This avoids a fixed 99% tax freezing small
+/// late-stage recursive opportunities while still maximizing protocol capture.
+///
 /// Managed pulse pools may additionally require one settlement/base token (USDx
 /// in the recursive engine). This prevents closing the QE wedge with a CORE-based
 /// cycle that would pay the protocol tax in the wrong asset and bypass USDx recycling.
@@ -34,6 +39,7 @@ contract GraphArbExecutor {
     mapping(address => bool) public allowedTarget;
     mapping(address => address) public spenderForTarget;
     mapping(address => address) public requiredBaseTokenForTarget;
+    mapping(address => uint256) public minSearcherReward;
 
     struct Leg {
         address target;
@@ -48,6 +54,7 @@ contract GraphArbExecutor {
     event VenueSet(address indexed target, address indexed spender, bool allowed);
     event RequiredBaseTokenSet(address indexed target, address indexed baseToken);
     event ProfitTaxSet(uint16 bps);
+    event MinSearcherRewardSet(address indexed baseToken, uint256 amount);
     event Cycle(
         address indexed searcher,
         address indexed baseToken,
@@ -93,15 +100,24 @@ contract GraphArbExecutor {
         emit RequiredBaseTokenSet(target, baseToken);
     }
 
+    /// @notice Maximum share of realized profit captured by the protocol.
     function setProfitTaxBps(uint16 bps) external onlyOwner {
         if (bps > MAX_PROFIT_TAX_BPS) revert BadRoute();
         profitTaxBps = bps;
         emit ProfitTaxSet(bps);
     }
 
+    /// @notice Absolute base-token reward floor left to a solver after protocol tax.
+    /// Configure it from gas/risk economics of the relevant chain/token.
+    function setMinSearcherReward(address baseToken, uint256 amount) external onlyOwner {
+        if (baseToken == address(0)) revert BadRoute();
+        minSearcherReward[baseToken] = amount;
+        emit MinSearcherRewardSet(baseToken, amount);
+    }
+
     function setPaused(bool value) external onlyOwner { paused = value; }
 
-    /// @param minNetProfit Minimum profit retained by the searcher AFTER protocol tax.
+    /// @param minNetProfit Optional additional minimum retained profit requested by the searcher.
     function executeCycle(
         address baseToken,
         uint256 principal,
@@ -149,7 +165,13 @@ contract GraphArbExecutor {
         if (grossReturned <= principal) revert NotProfitable();
 
         uint256 grossProfit = grossReturned - principal;
+        uint256 rewardFloor = minSearcherReward[baseToken];
+        if (grossProfit <= rewardFloor) revert NotProfitable();
+
         uint256 protocolTax = (grossProfit * profitTaxBps) / 10_000;
+        uint256 maxTaxLeavingFloor = grossProfit - rewardFloor;
+        if (protocolTax > maxTaxLeavingFloor) protocolTax = maxTaxLeavingFloor;
+
         netProfit = grossProfit - protocolTax;
         if (netProfit < minNetProfit) revert NotProfitable();
 

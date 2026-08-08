@@ -106,8 +106,6 @@ async function fixture(bHaircutBps = 10000) {
   await (await validationOracle.updatePrices(hardTokens, [E(1), E(1)])).wait();
   await (await ledger.permanentlyExcludeAsset(await usdx.getAddress())).wait();
 
-  // Monetary engine registration is deliberately impossible while Economic NAV
-  // still depends on only one canonical feed.
   await mustRevert(
     adapter.setGradientEngine(await engine.getAddress(), true),
     "gradient engine must require frozen independent Economic validation oracle"
@@ -115,11 +113,15 @@ async function fixture(bHaircutBps = 10000) {
   await (await ledger.setValidationOracle(await validationOracle.getAddress(), true)).wait();
   assert.equal(await ledger.oracleValidationReady(), true);
   await mustRevert(
+    adapter.setGradientEngine(await engine.getAddress(), true),
+    "validator-ready but empty hard-asset ledger must still be non-activatable"
+  );
+  await mustRevert(
     ledger.setValidationOracle(await oracle.getAddress(), false),
     "validation oracle freeze must be irreversible"
   );
-  await (await adapter.setGradientEngine(await engine.getAddress(), true)).wait();
 
+  // Full Economic balance sheet comes BEFORE monetary-engine registration.
   await (await ledger.addHardAsset(await tokenA.getAddress())).wait();
   await (await ledger.addHardAsset(await tokenB.getAddress())).wait();
   await (await ledger.setHardAccount(await tokenA.getAddress(), await source.getAddress(), true)).wait();
@@ -128,6 +130,9 @@ async function fixture(bHaircutBps = 10000) {
 
   const liabilityId = ethers.keccak256(ethers.toUtf8Bytes("EXTERNAL_USDX"));
   await (await liabilities.addLiability(liabilityId, 18, E(1), 10000, ethers.ZeroAddress, E(100))).wait();
+  assert.equal(await ledger.oracleValidationCoversAllAssets(), true);
+  await (await adapter.setGradientEngine(await engine.getAddress(), true)).wait();
+
   await (await risk.setHaircut(await tokenA.getAddress(), 10000)).wait();
   await (await risk.setHaircut(await tokenB.getAddress(), bHaircutBps)).wait();
   await (await risk.setRiskData(await tokenA.getAddress(), E(1), E(1))).wait();

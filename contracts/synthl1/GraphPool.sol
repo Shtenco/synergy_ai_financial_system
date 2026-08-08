@@ -10,6 +10,10 @@ interface IMEVCapturePool {
 
 /// @notice Generic constant-product graph pool with an LP fee and a separate
 /// directional output toll. Deploy many instances to form the internal graph.
+///
+/// For managed SynthL1 pulse pools, the owner may gate CORE->USDx (zeroToOne)
+/// through the taxed GraphArbExecutor. This prevents a searcher from bypassing
+/// realized-profit capture by calling the pool directly.
 contract GraphPool {
     using SafeTransferLib for address;
 
@@ -18,6 +22,8 @@ contract GraphPool {
     IMEVCapturePool public immutable capture;
 
     address public owner;
+    address public arbExecutor;
+    bool public restrictZeroToOne;
     uint16 public lpFeeBps = 30;
     bool public paused;
     uint256 private lockState = 1;
@@ -32,6 +38,7 @@ contract GraphPool {
     event Swap(address indexed trader, bool zeroToOne, uint256 amountIn, uint256 grossOut, uint256 tollOut, uint256 netOut);
     event LPFeeSet(uint16 bps);
     event Paused(bool value);
+    event ArbExecutorSet(address indexed executor, bool restrictZeroToOne);
 
     error Unauthorized();
     error BadConfig();
@@ -62,6 +69,13 @@ contract GraphPool {
     function setPaused(bool value) external onlyOwner {
         paused = value;
         emit Paused(value);
+    }
+
+    function setArbExecutor(address executor, bool restrictDirection) external onlyOwner {
+        if (restrictDirection && executor == address(0)) revert BadConfig();
+        arbExecutor = executor;
+        restrictZeroToOne = restrictDirection;
+        emit ArbExecutorSet(executor, restrictDirection);
     }
 
     function addLiquidity(uint256 amount0, uint256 amount1, uint256 minShares)
@@ -129,6 +143,7 @@ contract GraphPool {
         external nonReentrant active returns (uint256 netOut)
     {
         if (to == address(0) || amountIn == 0) revert BadConfig();
+        if (zeroToOne && restrictZeroToOne && msg.sender != arbExecutor) revert Unauthorized();
 
         uint256 grossOut;
         uint256 tollOut;

@@ -33,6 +33,17 @@ class V15SoliditySurfaceTests(unittest.TestCase):
         self.assertIn("hardNAV1e18", text)
         self.assertIn("everHardAccount", text)
 
+    def test_economic_ledger_requires_independent_frozen_validation_oracle_for_monetary_readiness(self):
+        text = (V15 / "V15EconomicLedger.sol").read_text()
+        self.assertIn("address public validationOracle", text)
+        self.assertIn("bool public validationOracleFrozen", text)
+        self.assertRegex(text, r"function setValidationOracle\(")
+        self.assertRegex(text, r"function oracleValidationReady\(\)")
+        self.assertRegex(text, r"function canonicalPrice1e18\(")
+        self.assertIn("validator == oracle", text)
+        self.assertIn("primary < secondary ? primary : secondary", text)
+        self.assertIn("if (validationOracleFrozen) revert Frozen()", text)
+
     def test_manual_liabilities_fail_closed_when_stale_and_cannot_be_hidden(self):
         text = (V15 / "V15LiabilityRegistry.sol").read_text()
         self.assertIn("manualUpdatedAt", text)
@@ -60,12 +71,14 @@ class V15SoliditySurfaceTests(unittest.TestCase):
         self.assertRegex(text, r"address public immutable protocolLiquidityOwner")
         self.assertIn("gate.assertRouteState();", text)
 
-    def test_gradient_engine_requires_irreversible_synthetic_exclusion(self):
+    def test_gradient_engine_requires_irreversible_synthetic_exclusion_and_oracle_readiness(self):
         text = (V15 / "V15AccountingAdapter.sol").read_text()
         self.assertIn("ledger.permanentlyExcludedAsset(synthetic)", text)
         self.assertIn("ledger.isHardAsset(synthetic)", text)
         self.assertIn("SyntheticNotPermanentlyExcluded", text)
         self.assertIn("IV15GradientActiveView(engine).usdx()", text)
+        self.assertIn("ledger.oracleValidationReady()", text)
+        self.assertIn("OracleValidationNotReady", text)
 
     def test_active_registered_gradient_can_restore_even_if_coverage_is_below_normal_floor(self):
         text = (V15 / "V15AccountingAdapter.sol").read_text()

@@ -1,0 +1,59 @@
+name: V15 Overlay CI
+
+on:
+  push:
+    branches:
+      - v15-math-over-v13-1
+    paths:
+      - 'contracts/v15/**'
+      - 'test/v15_*.js'
+      - 'simulation/v15/**'
+      - 'tests/test_v15_*.py'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'hardhat.config.js'
+      - '.github/workflows/v15-overlay-ci.yml'
+  pull_request:
+    paths:
+      - 'contracts/v15/**'
+      - 'test/v15_*.js'
+      - 'simulation/v15/**'
+      - 'tests/test_v15_*.py'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'hardhat.config.js'
+      - '.github/workflows/v15-overlay-ci.yml'
+
+jobs:
+  compile-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned dependencies
+        run: npm ci
+
+      - name: Compile all Solidity
+        run: npm run compile
+
+      - name: Run V15 math and static invariants
+        run: npm run test:v15
+
+      - name: Run V15 EVM overlay integration tests
+        run: npm run test:v15:evm
+
+      - name: Re-run frozen V13.1 EVM guards
+        run: npm run test:synthl1:evm

@@ -17,6 +17,8 @@ interface ICORERecursive {
 interface IGraphPoolRecursive {
     function token0() external view returns(address);
     function token1() external view returns(address);
+    function totalShares() external view returns(uint256);
+    function shares(address) external view returns(uint256);
     function swapExactIn(bool zeroToOne,uint256 amountIn,uint256 minNetOut,address to) external returns(uint256);
     function spot1Per0() external view returns(uint256);
 }
@@ -30,6 +32,10 @@ interface ICaptureRecursive {
 /// @notice Recursive SynthL1 loop:
 /// initial USDx QE -> CORE buyback + burn -> internal graph wedge ->
 /// public MEV/searcher closure -> USDx toll capture -> toll reinvestment -> repeat.
+///
+/// Economic safety rule: QE/reinvestment is allowed only in a pulse pool whose LP
+/// shares are 100% held by `protocolLiquidityOwner`. If public LP shares appear,
+/// the pulse is rejected instead of externalizing newly minted USDx to public LPs.
 contract RecursiveElasticEngine {
     using SafeTransferLib for address;
 
@@ -38,6 +44,7 @@ contract RecursiveElasticEngine {
 
     address public immutable core;
     address public immutable usdx;
+    address public immutable protocolLiquidityOwner;
     ICaptureRecursive public immutable capture;
 
     mapping(address => bool) public pulsePool;
@@ -63,14 +70,24 @@ contract RecursiveElasticEngine {
     error NotActive();
     error ActiveEpoch();
     error InsufficientCaptured();
+    error PulsePoolNotProtocolOwned();
 
-    constructor(address core_, address usdx_, address capture_, address owner_, address operator_) {
-        if (core_ == address(0) || usdx_ == address(0) || capture_ == address(0) || owner_ == address(0) || operator_ == address(0)) {
-            revert BadConfig();
-        }
+    constructor(
+        address core_,
+        address usdx_,
+        address capture_,
+        address protocolLiquidityOwner_,
+        address owner_,
+        address operator_
+    ) {
+        if (
+            core_ == address(0) || usdx_ == address(0) || capture_ == address(0) ||
+            protocolLiquidityOwner_ == address(0) || owner_ == address(0) || operator_ == address(0)
+        ) revert BadConfig();
         core = core_;
         usdx = usdx_;
         capture = ICaptureRecursive(capture_);
+        protocolLiquidityOwner = protocolLiquidityOwner_;
         owner = owner_;
         operator = operator_;
     }
@@ -87,6 +104,7 @@ contract RecursiveElasticEngine {
         if (pool == address(0)) revert BadConfig();
         if (allowed) {
             if (IGraphPoolRecursive(pool).token0() != core || IGraphPoolRecursive(pool).token1() != usdx) revert BadConfig();
+            _requireProtocolOwnedPool(pool);
         }
         pulsePool[pool] = allowed;
         emit PoolSet(pool, allowed);
@@ -105,6 +123,7 @@ contract RecursiveElasticEngine {
     function initializeQE(address pool, uint256 qeUSDx, uint256 minCoreOut) external onlyOperator returns (uint256 coreBurned) {
         if (active) revert ActiveEpoch();
         if (!pulsePool[pool] || qeUSDx == 0) revert BadConfig();
+        _requireProtocolOwnedPool(pool);
 
         active = true;
         epoch += 1;
@@ -128,6 +147,7 @@ contract RecursiveElasticEngine {
     {
         if (!active) revert NotActive();
         if (!pulsePool[nextPool] || amount < minReinvestUSDx) revert BadConfig();
+        _requireProtocolOwnedPool(nextPool);
         if (capture.available(usdx) < amount) revert InsufficientCaptured();
 
         capture.pullForReinvestment(usdx, address(this), amount);
@@ -146,6 +166,7 @@ contract RecursiveElasticEngine {
     {
         if (!active) revert NotActive();
         if (!pulsePool[nextPool]) revert BadConfig();
+        _requireProtocolOwnedPool(nextPool);
 
         usdReused = capture.available(usdx);
         if (usdReused < minReinvestUSDx) revert InsufficientCaptured();
@@ -171,9 +192,18 @@ contract RecursiveElasticEngine {
         return capture.available(usdx);
     }
 
+    function isProtocolOwnedPulsePool(address pool) public view returns (bool) {
+        uint256 total = IGraphPoolRecursive(pool).totalShares();
+        return total != 0 && IGraphPoolRecursive(pool).shares(protocolLiquidityOwner) == total;
+    }
+
     function recycleTurnoverMultiple1e18() external view returns (uint256) {
         if (initialQEMinted == 0) return 0;
         return (cumulativeReinvestedUSDx * 1e18) / initialQEMinted;
+    }
+
+    function _requireProtocolOwnedPool(address pool) internal view {
+        if (!isProtocolOwnedPulsePool(pool)) revert PulsePoolNotProtocolOwned();
     }
 
     function _buybackAndBurn(address pool, uint256 usdAmount, uint256 minCoreOut) internal returns (uint256 coreOut) {

@@ -33,6 +33,8 @@ interface ICaptureRecursive {
 interface IAccountingRecursive {
     function externalCoverageBps() external view returns(uint256);
     function isProtocolUSDxAccount(address account) external view returns(bool);
+    function isProtocolUSDxPoolAccount(address account) external view returns(bool);
+    function protocolLiquidityOwner() external view returns(address);
 }
 
 /// @notice Recursive SynthL1 loop:
@@ -41,10 +43,12 @@ interface IAccountingRecursive {
 ///
 /// Safety invariants:
 /// 1. QE/reinvestment only touches a 100% protocol-owned pulse pool.
-/// 2. Pulse pool and capture vault must be registered protocol USDx accounts.
-/// 3. External USDx liabilities must remain covered by hard assets at or above
+/// 2. Pulse pools must be registered as dynamic LP-owned protocol USDx accounts;
+///    capture vault must be registered as a static protocol USDx account.
+/// 3. Engine and accounting must use the same protocolLiquidityOwner.
+/// 4. External USDx liabilities must remain covered by hard assets at or above
 ///    the configured minimum before every new pulse.
-/// 4. Every pulse is bounded against the pool's actual USDx quote reserve.
+/// 5. Every pulse is bounded against the pool's actual USDx quote reserve.
 contract RecursiveElasticEngine {
     using SafeTransferLib for address;
 
@@ -125,7 +129,8 @@ contract RecursiveElasticEngine {
         if (allowed) {
             if (IGraphPoolRecursive(pool).token0() != core || IGraphPoolRecursive(pool).token1() != usdx) revert BadConfig();
             _requireProtocolOwnedPool(pool);
-            if (!accounting.isProtocolUSDxAccount(pool)) revert AccountingNotConfigured();
+            if (!accounting.isProtocolUSDxPoolAccount(pool)) revert AccountingNotConfigured();
+            if (accounting.protocolLiquidityOwner() != protocolLiquidityOwner) revert AccountingNotConfigured();
         }
         pulsePool[pool] = allowed;
         emit PoolSet(pool, allowed);
@@ -247,9 +252,10 @@ contract RecursiveElasticEngine {
 
     function _requireAccountingConfigured(address pool) internal view {
         _requireProtocolOwnedPool(pool);
-        if (!accounting.isProtocolUSDxAccount(pool) || !accounting.isProtocolUSDxAccount(address(capture))) {
+        if (!accounting.isProtocolUSDxPoolAccount(pool) || !accounting.isProtocolUSDxAccount(address(capture))) {
             revert AccountingNotConfigured();
         }
+        if (accounting.protocolLiquidityOwner() != protocolLiquidityOwner) revert AccountingNotConfigured();
     }
 
     function _requireProtocolOwnedPool(address pool) internal view {

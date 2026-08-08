@@ -17,17 +17,8 @@ interface IPriceOracleAccountingV6 {
 }
 
 /// @notice Conservative multi-asset consolidated accounting for the V13-style graph.
-///
-/// Assets:
-/// - real quote assets (USDT/USDC/DAI/WPOL/WETH/...) are valued through PriceOracleHub;
-/// - each asset has an explicit haircut;
-/// - only registered asset/account pairs are included.
-///
-/// Liabilities:
-/// - USDx held by static protocol accounts is treasury inventory;
-/// - USDx inside a registered managed pool is protocol inventory only while the
-///   configured protocol liquidity owner owns 100% of live LP shares;
-/// - every remaining USDx unit is treated as a $1 external liability.
+/// Real assets are marked through PriceOracleHub; synthetic protocol inventory is
+/// separated from external USDx liabilities.
 contract SystemAccounting {
     struct AssetConfig {
         bool enabled;
@@ -119,6 +110,21 @@ contract SystemAccounting {
         isProtocolUSDxPoolAccount[account] = poolAccount;
         protocolUSDxAccounts.push(account);
         emit ProtocolUSDxAccountAdded(account, poolAccount);
+    }
+
+    /// @notice Raw midpoint USD mark without the static balance-sheet haircut.
+    /// Used by GraphArbExecutor only to convert absolute route turnover into an
+    /// oracle-error uncertainty bound. Reverts for unregistered hard assets.
+    function markValue1e18(address token, uint256 amount) public view returns (uint256) {
+        AssetConfig memory cfg = assetConfig[token];
+        if (!cfg.enabled) revert BadConfig();
+        uint256 price = IPriceOracleAccountingV6(oracle).price1e18(token);
+        uint256 scale = 10 ** uint256(cfg.decimals);
+        return (amount * price) / scale;
+    }
+
+    function isHardAsset(address token) external view returns (bool) {
+        return assetConfig[token].enabled;
     }
 
     /// @notice Haircut USD value of all registered real assets and accounts.

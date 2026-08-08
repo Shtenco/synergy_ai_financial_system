@@ -19,20 +19,32 @@ interface IProtocolNAVAccounting {
     function markValue1e18(address token, uint256 amount) external view returns (uint256);
 }
 
+interface IActiveGradientExec {
+    function active() external view returns (bool);
+    function sourcePool() external view returns (address);
+    function destinationPool() external view returns (address);
+    function usdx() external view returns (address);
+}
+
+interface IGradientPoolExecView {
+    function token0() external view returns (address);
+    function token1() external view returns (address);
+}
+
 /// @notice Public atomic graph router for external searchers / MEV cycles.
 /// Searchers supply their own principal. Protocol tax is charged only on
 /// REALIZED base-token profit after all route legs, never on principal.
 ///
-/// V13.1 safety:
-/// - optional SystemAccounting post-trade HardNAV gate;
-/// - managed internal venues are explicitly marked as protocolTarget;
-/// - registered hard accounts are also auto-detected, preventing a missing flag
-///   from omitting economically relevant turnover;
-/// - absolute real-asset turnover through protocol venues is marked in USD;
-/// - a configured oracle-error bound is multiplied by that turnover and added to
-///   the minimum required NAV gain:
+/// Managed-gradient mode binds the first two legs to the currently active
+/// destination/source pair:
 ///
-///   measuredGain >= baseMinGain + hardTurnover * maxOracleErrorBps / 10000.
+///   destinationQuote -> synthetic(destination)
+///   synthetic -> sourceQuote(source)
+///   sourceQuote -> external graph -> destinationQuote
+///
+/// No other protocolTarget may appear later in that cycle. Multiple searchers may
+/// repeat the same active-pair geometry before ReserveGradientEngine restores the
+/// accumulated equal-and-opposite synthetic reserve displacement.
 contract GraphArbExecutor {
     using SafeTransferLib for address;
 
@@ -60,6 +72,9 @@ contract GraphArbExecutor {
     uint256 public minProtocolNavGain1e18;
     uint16 public maxOracleErrorBps;
 
+    address public gradientEngine;
+    bool public enforceActiveGradientPair;
+
     struct Leg {
         address target;
         address spender;
@@ -79,6 +94,7 @@ contract GraphArbExecutor {
     event MinSearcherRewardSet(address indexed baseToken, uint256 amount);
     event ProtocolNAVGuardSet(address indexed accounting, bool enabled, uint256 minGain1e18);
     event MaxOracleErrorSet(uint16 bps);
+    event GradientEngineSet(address indexed engine, bool enforceActivePair);
     event ProtocolNAVChecked(
         address indexed searcher,
         int256 navBefore1e18,
@@ -111,6 +127,7 @@ contract GraphArbExecutor {
     error PausedError();
     error ProtocolNAVNotImproved();
     error ExecutorMustBeUnaccounted();
+    error GradientRouteMismatch();
 
     constructor(address owner_, address capture_) {
         if (owner_ == address(0) || capture_ == address(0)) revert BadRoute();
@@ -184,6 +201,13 @@ contract GraphArbExecutor {
         emit MaxOracleErrorSet(bps);
     }
 
+    function setGradientEngine(address engine, bool enforcePair) external onlyOwner {
+        if (enforcePair && engine == address(0)) revert BadRoute();
+        gradientEngine = engine;
+        enforceActiveGradientPair = enforcePair;
+        emit GradientEngineSet(engine, enforcePair);
+    }
+
     function setPaused(bool value) external onlyOwner { paused = value; }
 
     function executeCycle(
@@ -199,6 +223,7 @@ contract GraphArbExecutor {
         uint256 n = legs.length;
         if (n < 2 || n > MAX_LEGS) revert BadRoute();
         if (legs[0].tokenIn != baseToken || legs[n-1].tokenOut != baseToken) revert BadRoute();
+        if (enforceActiveGradientPair) _validateActiveGradientRoute(baseToken, legs);
 
         int256 navBefore;
         uint256 hardTurnover1e18;
@@ -316,6 +341,35 @@ contract GraphArbExecutor {
         baseToken.safeTransfer(msg.sender, returned);
 
         emit Cycle(msg.sender, baseToken, principal, grossReturned, grossProfit, protocolTax, netProfit, n);
+    }
+
+    function _validateActiveGradientRoute(address baseToken, Leg[] calldata legs) internal view {
+        if (legs.length < 3 || gradientEngine == address(0)) revert GradientRouteMismatch();
+        IActiveGradientExec engine = IActiveGradientExec(gradientEngine);
+        if (!engine.active()) revert GradientRouteMismatch();
+
+        address source = engine.sourcePool();
+        address destination = engine.destinationPool();
+        address synthetic = engine.usdx();
+        if (source == address(0) || destination == address(0) || source == destination) revert GradientRouteMismatch();
+
+        address destinationQuote = IGradientPoolExecView(destination).token1();
+        address sourceQuote = IGradientPoolExecView(source).token1();
+        if (IGradientPoolExecView(destination).token0() != synthetic) revert GradientRouteMismatch();
+        if (IGradientPoolExecView(source).token0() != synthetic) revert GradientRouteMismatch();
+        if (destinationQuote != baseToken || sourceQuote == destinationQuote) revert GradientRouteMismatch();
+
+        Leg calldata first = legs[0];
+        Leg calldata second = legs[1];
+        if (
+            first.target != destination || first.tokenIn != destinationQuote || first.tokenOut != synthetic ||
+            second.target != source || second.tokenIn != synthetic || second.tokenOut != sourceQuote
+        ) revert GradientRouteMismatch();
+        if (!protocolTarget[destination] || !protocolTarget[source]) revert GradientRouteMismatch();
+
+        for (uint256 i = 2; i < legs.length; ++i) {
+            if (protocolTarget[legs[i].target]) revert GradientRouteMismatch();
+        }
     }
 
     function _requireExecutorUnaccounted(

@@ -7,6 +7,7 @@
     "compile": "hardhat compile",
     "test": "python -m unittest discover -s tests -v",
     "test:synthl1": "python -m unittest tests.test_synthl1_recursive_qe_mev tests.test_synthl1_economic_audit tests.test_synthl1_system_audit_v52 tests.test_synthl1_reserve_gradient_v6 tests.test_synthl1_stateful_gradient_graph_v13 -v",
+    "test:synthl1:evm": "hardhat test test/synthl1_reserve_gradient_v6.js",
     "sim:synthl1": "python simulation/synthl1/recursive_qe_mev.py",
     "sim:synthl1:gradient": "python simulation/synthl1/reserve_gradient_v6.py",
     "sim:synthl1:v13": "python simulation/synthl1/stateful_gradient_graph_v13.py",

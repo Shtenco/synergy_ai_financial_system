@@ -5,7 +5,8 @@ from hashlib import sha256
 import json
 from math import isfinite
 
-from .core import BalanceSheet, PolicyDecision, TripleMoneyLedger
+from .core import BalanceSheet, PolicyDecision
+from .money import SegregatedTripleMoneyLedger
 
 
 @dataclass(frozen=True)
@@ -79,7 +80,7 @@ class FinancialSnapshot:
         *,
         sequence: int,
         balance_sheet: BalanceSheet,
-        ledger: TripleMoneyLedger,
+        ledger: SegregatedTripleMoneyLedger,
         policy: PolicyDecision,
         previous_hard_nav: float,
     ) -> FinancialSnapshot:

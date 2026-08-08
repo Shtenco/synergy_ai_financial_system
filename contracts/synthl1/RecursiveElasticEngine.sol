@@ -29,13 +29,20 @@ interface ICaptureRecursive {
     function setOutputToll(address pool,bool zeroToOne,uint16 bps) external;
 }
 
+interface IAccountingRecursive {
+    function externalCoverageBps() external view returns(uint256);
+    function isProtocolUSDxAccount(address account) external view returns(bool);
+}
+
 /// @notice Recursive SynthL1 loop:
 /// initial USDx QE -> CORE buyback + burn -> internal graph wedge ->
-/// public MEV/searcher closure -> USDx toll capture -> toll reinvestment -> repeat.
+/// searcher closure -> realized-profit/output capture -> USDx reinvestment -> repeat.
 ///
-/// Economic safety rule: QE/reinvestment is allowed only in a pulse pool whose LP
-/// shares are 100% held by `protocolLiquidityOwner`. If public LP shares appear,
-/// the pulse is rejected instead of externalizing newly minted USDx to public LPs.
+/// Safety invariants:
+/// 1. QE/reinvestment only touches a 100% protocol-owned pulse pool.
+/// 2. Pulse pool and capture vault must be registered protocol USDx accounts.
+/// 3. External USDx liabilities must remain covered by hard assets at or above
+///    the configured minimum before every new pulse.
 contract RecursiveElasticEngine {
     using SafeTransferLib for address;
 
@@ -46,6 +53,7 @@ contract RecursiveElasticEngine {
     address public immutable usdx;
     address public immutable protocolLiquidityOwner;
     ICaptureRecursive public immutable capture;
+    IAccountingRecursive public immutable accounting;
 
     mapping(address => bool) public pulsePool;
     bool public active;
@@ -58,12 +66,14 @@ contract RecursiveElasticEngine {
     uint256 public lastPulseUSDx;
 
     uint256 public minReinvestUSDx = 1e12;
+    uint16 public minExternalCoverageBps = 12_000; // 120%
 
     event PoolSet(address indexed pool, bool allowed);
     event EpochStarted(uint64 indexed epoch, address indexed pool, uint256 qeUSDx, uint256 coreBurned, uint256 newPrice);
     event Reinvested(uint64 indexed epoch, address indexed pool, uint256 usdReused, uint256 coreBurned, uint256 newPrice);
     event EpochStopped(uint64 indexed epoch);
     event TollSet(address indexed pool, bool zeroToOne, uint16 bps);
+    event CoverageFloorSet(uint16 bps);
 
     error Unauthorized();
     error BadConfig();
@@ -71,22 +81,27 @@ contract RecursiveElasticEngine {
     error ActiveEpoch();
     error InsufficientCaptured();
     error PulsePoolNotProtocolOwned();
+    error AccountingNotConfigured();
+    error ExternalUSDxUndercovered();
 
     constructor(
         address core_,
         address usdx_,
         address capture_,
+        address accounting_,
         address protocolLiquidityOwner_,
         address owner_,
         address operator_
     ) {
         if (
             core_ == address(0) || usdx_ == address(0) || capture_ == address(0) ||
-            protocolLiquidityOwner_ == address(0) || owner_ == address(0) || operator_ == address(0)
+            accounting_ == address(0) || protocolLiquidityOwner_ == address(0) ||
+            owner_ == address(0) || operator_ == address(0)
         ) revert BadConfig();
         core = core_;
         usdx = usdx_;
         capture = ICaptureRecursive(capture_);
+        accounting = IAccountingRecursive(accounting_);
         protocolLiquidityOwner = protocolLiquidityOwner_;
         owner = owner_;
         operator = operator_;
@@ -105,6 +120,7 @@ contract RecursiveElasticEngine {
         if (allowed) {
             if (IGraphPoolRecursive(pool).token0() != core || IGraphPoolRecursive(pool).token1() != usdx) revert BadConfig();
             _requireProtocolOwnedPool(pool);
+            if (!accounting.isProtocolUSDxAccount(pool)) revert AccountingNotConfigured();
         }
         pulsePool[pool] = allowed;
         emit PoolSet(pool, allowed);
@@ -112,6 +128,12 @@ contract RecursiveElasticEngine {
 
     function setMinReinvestUSDx(uint256 amount) external onlyOwner {
         minReinvestUSDx = amount;
+    }
+
+    function setMinExternalCoverageBps(uint16 bps) external onlyOwner {
+        if (bps < 10_000 || bps > 50_000) revert BadConfig();
+        minExternalCoverageBps = bps;
+        emit CoverageFloorSet(bps);
     }
 
     function setPoolToll(address pool, bool zeroToOne, uint16 bps) external onlyOperator {
@@ -123,7 +145,8 @@ contract RecursiveElasticEngine {
     function initializeQE(address pool, uint256 qeUSDx, uint256 minCoreOut) external onlyOperator returns (uint256 coreBurned) {
         if (active) revert ActiveEpoch();
         if (!pulsePool[pool] || qeUSDx == 0) revert BadConfig();
-        _requireProtocolOwnedPool(pool);
+        _requireAccountingConfigured(pool);
+        _requireSolvent();
 
         active = true;
         epoch += 1;
@@ -147,7 +170,8 @@ contract RecursiveElasticEngine {
     {
         if (!active) revert NotActive();
         if (!pulsePool[nextPool] || amount < minReinvestUSDx) revert BadConfig();
-        _requireProtocolOwnedPool(nextPool);
+        _requireAccountingConfigured(nextPool);
+        _requireSolvent();
         if (capture.available(usdx) < amount) revert InsufficientCaptured();
 
         capture.pullForReinvestment(usdx, address(this), amount);
@@ -166,7 +190,8 @@ contract RecursiveElasticEngine {
     {
         if (!active) revert NotActive();
         if (!pulsePool[nextPool]) revert BadConfig();
-        _requireProtocolOwnedPool(nextPool);
+        _requireAccountingConfigured(nextPool);
+        _requireSolvent();
 
         usdReused = capture.available(usdx);
         if (usdReused < minReinvestUSDx) revert InsufficientCaptured();
@@ -202,8 +227,19 @@ contract RecursiveElasticEngine {
         return (cumulativeReinvestedUSDx * 1e18) / initialQEMinted;
     }
 
+    function _requireAccountingConfigured(address pool) internal view {
+        _requireProtocolOwnedPool(pool);
+        if (!accounting.isProtocolUSDxAccount(pool) || !accounting.isProtocolUSDxAccount(address(capture))) {
+            revert AccountingNotConfigured();
+        }
+    }
+
     function _requireProtocolOwnedPool(address pool) internal view {
         if (!isProtocolOwnedPulsePool(pool)) revert PulsePoolNotProtocolOwned();
+    }
+
+    function _requireSolvent() internal view {
+        if (accounting.externalCoverageBps() < minExternalCoverageBps) revert ExternalUSDxUndercovered();
     }
 
     function _buybackAndBurn(address pool, uint256 usdAmount, uint256 minCoreOut) internal returns (uint256 coreOut) {

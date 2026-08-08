@@ -73,14 +73,25 @@ contract V15EconomicLedger {
 
     /// @notice Economic canonical mark. During bootstrap, before validator setup,
     /// the primary oracle remains readable for configuration/tests. Monetary-engine
-    /// registration is separately forbidden until oracleValidationReady()==true.
-    /// Once a validator exists, both feeds must be fresh/readable or this view reverts.
+    /// registration is separately forbidden until the validator is frozen and can
+    /// price every registered hard asset.
     function canonicalPrice1e18(address token) public view returns (uint256) {
         uint256 primary = IV15CanonicalOracle(oracle).price1e18(token);
         address validator = validationOracle;
         if (validator == address(0)) return primary;
         uint256 secondary = IV15CanonicalOracle(validator).price1e18(token);
         return primary < secondary ? primary : secondary;
+    }
+
+    /// @notice Activation readiness probe. It intentionally performs both fresh
+    /// oracle reads for every hard asset. Any missing/stale feed reverts. A system
+    /// with zero registered hard assets is never monetary-engine ready.
+    function oracleValidationCoversAllAssets() public view returns (bool) {
+        if (!oracleValidationReady() || assets.length == 0) return false;
+        for (uint256 i; i < assets.length; ++i) {
+            canonicalPrice1e18(assets[i]);
+        }
+        return true;
     }
 
     /// @dev One-way switch. Use for SYNA/SYNR/USDx and every own synthetic.

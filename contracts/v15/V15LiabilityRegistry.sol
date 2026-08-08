@@ -42,6 +42,7 @@ contract V15LiabilityRegistry {
     error BadConfig();
     error SourceManaged();
     error StaleLiability(bytes32 id);
+    error OutstandingLiability(bytes32 id);
 
     constructor(address owner_) {
         if (owner_ == address(0)) revert BadConfig();
@@ -115,18 +116,23 @@ contract V15LiabilityRegistry {
         LiabilityConfig storage c = liability[id];
         if (c.unitValue1e18 == 0) revert BadConfig();
         c.source = source;
-        // Switching back to manual mode starts a fresh reporting window from the
-        // currently stored manual amount. Governance/reporters should immediately
-        // refresh it if the amount itself may have changed.
-        c.manualUpdatedAt = source == address(0) ? uint64(block.timestamp) : uint64(0);
+        // Switching to manual mode deliberately invalidates the old manual value.
+        // A reporter must submit a fresh amount before accounting can proceed.
+        c.manualUpdatedAt = 0;
         emit LiabilitySourceSet(id, source);
     }
 
     function setEnabled(bytes32 id, bool enabled) external onlyOwner {
         LiabilityConfig storage c = liability[id];
         if (c.unitValue1e18 == 0) revert BadConfig();
+        if (!enabled && c.enabled) {
+            // Outstanding liabilities cannot be removed from the balance sheet.
+            // A stale manual value also reverts here, forcing a fresh report first.
+            if (currentAmount(id) != 0) revert OutstandingLiability(id);
+        }
         c.enabled = enabled;
-        if (enabled && c.source == address(0)) c.manualUpdatedAt = uint64(block.timestamp);
+        // Re-enable never refreshes manual freshness. If the previous report is
+        // stale, accounting remains fail-closed until setManualAmount is called.
         emit LiabilityEnabled(id, enabled);
     }
 

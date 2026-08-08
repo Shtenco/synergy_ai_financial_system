@@ -1,0 +1,150 @@
+import pathlib
+import re
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+V15 = ROOT / "contracts" / "v15"
+
+
+class V15SoliditySurfaceTests(unittest.TestCase):
+    def test_exact_eight_overlay_contracts(self):
+        files = sorted(x.name for x in V15.glob("*.sol"))
+        self.assertEqual(files, sorted([
+            "V15EconomicLedger.sol",
+            "V15LiabilityRegistry.sol",
+            "V15RiskOracle.sol",
+            "V15SolvencyController.sol",
+            "V15PostRouteGate.sol",
+            "V15AccountingAdapter.sol",
+            "V15Coordinator.sol",
+            "V15RevenueRouter.sol",
+        ]))
+
+    def test_sources_have_balanced_braces_and_one_contract_each(self):
+        for p in V15.glob("*.sol"):
+            text = p.read_text()
+            self.assertEqual(text.count("{"), text.count("}"), p.name)
+            self.assertEqual(len(re.findall(r"\bcontract\s+V15\w+", text)), 1, p.name)
+
+    def test_economic_ledger_has_no_risk_haircut(self):
+        text = (V15 / "V15EconomicLedger.sol").read_text()
+        self.assertNotIn("haircutBps", text)
+        self.assertIn("permanentlyExcludedAsset", text)
+        self.assertIn("hardNAV1e18", text)
+        self.assertIn("everHardAccount", text)
+
+    def test_economic_ledger_requires_independent_frozen_validation_oracle_for_monetary_readiness(self):
+        text = (V15 / "V15EconomicLedger.sol").read_text()
+        self.assertIn("address public validationOracle", text)
+        self.assertIn("bool public validationOracleFrozen", text)
+        self.assertRegex(text, r"function setValidationOracle\(")
+        self.assertRegex(text, r"function oracleValidationReady\(\)")
+        self.assertRegex(text, r"function canonicalPrice1e18\(")
+        self.assertIn("validator == oracle", text)
+        self.assertIn("primary < secondary ? primary : secondary", text)
+        self.assertIn("if (validationOracleFrozen) revert Frozen()", text)
+
+    def test_manual_liabilities_fail_closed_when_stale_and_cannot_be_hidden(self):
+        text = (V15 / "V15LiabilityRegistry.sol").read_text()
+        self.assertIn("manualUpdatedAt", text)
+        self.assertIn("manualMaxAge", text)
+        self.assertIn("StaleLiability", text)
+        self.assertIn("OutstandingLiability", text)
+        self.assertIn("block.timestamp > uint256(c.manualUpdatedAt) + uint256(manualMaxAge)", text)
+        self.assertIn("if (currentAmount(id) != 0) revert OutstandingLiability(id)", text)
+        self.assertIn("c.manualUpdatedAt = 0", text)
+
+    def test_risk_oracle_separates_reporter_marks_from_owner_haircut(self):
+        text = (V15 / "V15RiskOracle.sol").read_text()
+        self.assertRegex(text, r"function setHaircut\([^)]*\) external onlyOwner")
+        self.assertRegex(text, r"function setRiskData\([^)]*\) external onlyReporter")
+        self.assertIn("canonical < uint256(r.twap1e18)", text)
+        self.assertIn("p < uint256(r.exit1e18)", text)
+
+    def test_adapter_satisfies_both_frozen_v13_abis(self):
+        text = (V15 / "V15AccountingAdapter.sol").read_text()
+        for name in [
+            "consolidatedHardNAV1e18", "isHardAccount", "isHardAsset", "markValue1e18",
+            "externalCoverageBps", "isProtocolUSDxAccount", "isProtocolUSDxPoolAccount",
+        ]:
+            self.assertRegex(text, rf"function {name}\b")
+        self.assertRegex(text, r"address public immutable protocolLiquidityOwner")
+        self.assertIn("gate.assertRouteState();", text)
+
+    def test_gradient_engine_requires_irreversible_synthetic_exclusion_and_oracle_readiness(self):
+        text = (V15 / "V15AccountingAdapter.sol").read_text()
+        self.assertIn("ledger.permanentlyExcludedAsset(synthetic)", text)
+        self.assertIn("ledger.isHardAsset(synthetic)", text)
+        self.assertIn("SyntheticNotPermanentlyExcluded", text)
+        self.assertIn("IV15GradientActiveView(engine).usdx()", text)
+        self.assertIn("ledger.oracleValidationReady()", text)
+        self.assertIn("OracleValidationNotReady", text)
+
+    def test_active_registered_gradient_can_restore_even_if_coverage_is_below_normal_floor(self):
+        text = (V15 / "V15AccountingAdapter.sol").read_text()
+        self.assertIn("registeredGradientEngine", text)
+        self.assertIn("IV15GradientActiveView(msg.sender).active()", text)
+        self.assertIn("if (isActive) return type(uint256).max", text)
+
+    def test_post_route_gate_blocks_orange_red_searcher_routes(self):
+        text = (V15 / "V15PostRouteGate.sol").read_text()
+        self.assertIn("searcherRouteAllowed()", text)
+        self.assertNotIn("routeSolvent()", text)
+
+    def test_controller_has_absolute_concentration_guardian_and_distribution_headroom(self):
+        text = (V15 / "V15SolvencyController.sol").read_text()
+        self.assertIn("minRiskAssets1e18", text)
+        self.assertIn("maxSingleAssetConcentrationBps", text)
+        self.assertIn("address public guardian", text)
+        self.assertIn("bool public emergencyPaused", text)
+        self.assertRegex(text, r"function distributionHeadroom1e18\(\)")
+        self.assertIn("requiredBaseAssets", text)
+        self.assertIn("requiredStressAssets", text)
+        self.assertIn("!emergencyPaused", text)
+        self.assertIn("mode == Mode.GREEN || mode == Mode.YELLOW", text)
+
+    def test_revenue_uses_physical_contributions_and_no_manual_withdrawal_addback(self):
+        text = (V15 / "V15RevenueRouter.sol").read_text()
+        self.assertIn("recordContributionToken", text)
+        self.assertIn("safeTransferFrom(from, address(this), amount)", text)
+        self.assertIn("afterBalance - beforeBalance", text)
+        self.assertNotIn("recordWithdrawal1e18", text)
+        self.assertNotIn("withdrawals1e18", text)
+
+    def test_distribution_requires_hwm_profit_eligible_revenue_and_controller_headroom(self):
+        text = (V15 / "V15RevenueRouter.sol").read_text()
+        self.assertIn("eligibleRevenue1e18", text)
+        self.assertIn("recordEligibleRevenueToken", text)
+        self.assertIn("revenueSource", text)
+        self.assertIn("ledger.isHardAccount(token, from)", text)
+        self.assertIn("positiveAfterLoss < eligibleRevenue1e18", text)
+        self.assertIn("controller.distributionHeadroom1e18()", text)
+        self.assertNotIn("requiredReserveTopup1e18", text)
+
+    def test_revenue_has_single_settlement_loss_carryforward_and_accounted_custody(self):
+        text = (V15 / "V15RevenueRouter.sol").read_text()
+        self.assertIn("lossCarryforward1e18", text)
+        self.assertIn("periodSettled", text)
+        self.assertIn("if (!periodOpen || periodSettled", text)
+        self.assertIn("if (!periodOpen || !periodSettled)", text)
+        self.assertIn("ledger.isHardAccount(token, address(this))", text)
+
+    def test_restore_and_close_remain_available_in_emergency(self):
+        text = (V15 / "V15Coordinator.sol").read_text()
+        restore = re.search(r"function restoreGradient[\s\S]*?function closeGradient", text)
+        self.assertIsNotNone(restore)
+        self.assertNotIn("controller.canExpand", restore.group(0))
+
+    def test_only_revenue_router_imports_v13_library_not_v13_contract_logic(self):
+        imports = {}
+        for p in V15.glob("*.sol"):
+            vals = re.findall(r'import\s+"([^"]+)"', p.read_text())
+            imports[p.name] = vals
+        self.assertEqual(imports["V15RevenueRouter.sol"], ["../synthl1/SafeTransferLib.sol"])
+        for name, vals in imports.items():
+            if name != "V15RevenueRouter.sol":
+                self.assertEqual(vals, [], name)
+
+
+if __name__ == "__main__":
+    unittest.main()

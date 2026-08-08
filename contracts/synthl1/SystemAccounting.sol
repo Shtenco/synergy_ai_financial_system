@@ -73,6 +73,14 @@ contract SystemAccounting {
         return supply - held;
     }
 
+    /// @notice Hard-asset coverage of externally held USDx. Internal treasury stock
+    /// is excluded from the denominator. Returns max uint when external liability is zero.
+    function externalCoverageBps() public view returns (uint256) {
+        uint256 liability = externalUSDxLiability1e18();
+        if (liability == 0) return type(uint256).max;
+        return (hardAssets1e18() * 10_000) / liability;
+    }
+
     function consolidatedHardNAV1e18() public view returns (int256) {
         return int256(hardAssets1e18()) - int256(externalUSDxLiability1e18());
     }

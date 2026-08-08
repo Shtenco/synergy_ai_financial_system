@@ -34,7 +34,8 @@ contract V15RiskOracle {
     uint32 public maxAge = 300;
 
     event ReporterSet(address indexed reporter, bool allowed);
-    event RiskDataSet(address indexed token, uint256 twap1e18, uint256 exit1e18, uint16 haircutBps);
+    event RiskDataSet(address indexed token, uint256 twap1e18, uint256 exit1e18);
+    event HaircutSet(address indexed token, uint16 haircutBps);
     event ScenarioAdded(uint256 indexed id, bytes32 indexed name, uint16 liabilityStressBps, uint256 fixedCost1e18);
     event ScenarioSet(uint256 indexed id, uint16 liabilityStressBps, uint256 fixedCost1e18, bool enabled);
     event ScenarioAssetSet(uint256 indexed id, address indexed token, uint16 priceStressBps, uint16 liquidityBps);
@@ -66,14 +67,22 @@ contract V15RiskOracle {
         emit MaxAgeSet(age);
     }
 
-    function setRiskData(address token, uint256 twap, uint256 exitPrice, uint16 haircutBps) external onlyReporter {
+    function setHaircut(address token, uint16 haircutBps) external onlyOwner {
+        if (token == address(0) || haircutBps == 0 || haircutBps > 10_000) revert BadConfig();
+        riskData[token].haircutBps = haircutBps;
+        emit HaircutSet(token, haircutBps);
+    }
+
+    function setRiskData(address token, uint256 twap, uint256 exitPrice) external onlyReporter {
+        RiskData storage r = riskData[token];
         if (
             token == address(0) || twap == 0 || exitPrice == 0 ||
-            twap > type(uint192).max || exitPrice > type(uint192).max ||
-            haircutBps == 0 || haircutBps > 10_000
+            twap > type(uint192).max || exitPrice > type(uint192).max || r.haircutBps == 0
         ) revert BadConfig();
-        riskData[token] = RiskData(uint192(twap), uint192(exitPrice), uint64(block.timestamp), haircutBps);
-        emit RiskDataSet(token, twap, exitPrice, haircutBps);
+        r.twap1e18 = uint192(twap);
+        r.exit1e18 = uint192(exitPrice);
+        r.updatedAt = uint64(block.timestamp);
+        emit RiskDataSet(token, twap, exitPrice);
     }
 
     function riskPrice1e18(address token) public view returns (uint256) {

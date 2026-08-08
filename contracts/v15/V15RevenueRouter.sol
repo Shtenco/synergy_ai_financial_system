@@ -30,12 +30,18 @@ contract V15RevenueRouter {
     uint256 public withdrawals1e18;
     uint256 public distributableBudget1e18;
     uint256 public distributed1e18;
+    uint256 public lossCarryforward1e18;
 
     event CapitalFlowReporterSet(address indexed reporter);
     event PeriodStarted(int256 startNAV1e18);
     event ContributionRecorded(uint256 value1e18);
     event WithdrawalRecorded(uint256 value1e18);
-    event PeriodSettled(int256 operatingPnL1e18, uint256 reserveTopup1e18, uint256 distributable1e18);
+    event PeriodSettled(
+        int256 operatingPnL1e18,
+        uint256 lossCarryforwardAfter1e18,
+        uint256 reserveTopup1e18,
+        uint256 distributable1e18
+    );
     event Distributed(address indexed token, address indexed to, uint256 amount, uint256 value1e18);
     event PeriodClosed(int256 endingNAV1e18);
 
@@ -90,15 +96,28 @@ contract V15RevenueRouter {
         int256 nowNav = ledger.hardNAV1e18();
         if (contributions1e18 > uint256(type(int256).max) || withdrawals1e18 > uint256(type(int256).max)) revert BadConfig();
         pnl = nowNav - periodStartNAV1e18 - int256(contributions1e18) + int256(withdrawals1e18);
-        if (pnl <= 0 || uint256(pnl) <= requiredReserveTopup1e18) {
-            budget = 0;
+
+        uint256 positiveAfterLoss;
+        if (pnl <= 0) {
+            if (pnl == type(int256).min) revert BadConfig();
+            lossCarryforward1e18 += uint256(-pnl);
         } else {
-            budget = uint256(pnl) - requiredReserveTopup1e18;
+            uint256 positive = uint256(pnl);
+            if (positive <= lossCarryforward1e18) {
+                lossCarryforward1e18 -= positive;
+            } else {
+                positiveAfterLoss = positive - lossCarryforward1e18;
+                lossCarryforward1e18 = 0;
+            }
         }
+        if (positiveAfterLoss > requiredReserveTopup1e18) {
+            budget = positiveAfterLoss - requiredReserveTopup1e18;
+        }
+
         distributableBudget1e18 = budget;
         distributed1e18 = 0;
         periodSettled = true;
-        emit PeriodSettled(pnl, requiredReserveTopup1e18, budget);
+        emit PeriodSettled(pnl, lossCarryforward1e18, requiredReserveTopup1e18, budget);
     }
 
     function distribute(address token, address to, uint256 amount) external onlyOwner {
@@ -114,7 +133,7 @@ contract V15RevenueRouter {
     }
 
     function closePeriod() external onlyOwner {
-        if (!periodOpen) revert BadConfig();
+        if (!periodOpen || !periodSettled) revert BadConfig();
         periodOpen = false;
         emit PeriodClosed(ledger.hardNAV1e18());
     }

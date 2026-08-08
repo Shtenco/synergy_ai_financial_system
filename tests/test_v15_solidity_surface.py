@@ -50,16 +50,25 @@ class V15SoliditySurfaceTests(unittest.TestCase):
         self.assertRegex(text, r"address public immutable protocolLiquidityOwner")
         self.assertIn("gate.assertRouteState();", text)
 
-    def test_post_route_gate_is_fail_closed(self):
+    def test_post_route_gate_blocks_orange_red_searcher_routes(self):
         text = (V15 / "V15PostRouteGate.sol").read_text()
-        self.assertIn("if (!IV15SolvencyRouteGate(controller).routeSolvent()) revert", text)
+        self.assertIn("searcherRouteAllowed()", text)
+        self.assertNotIn("routeSolvent()", text)
 
-    def test_revenue_has_single_settlement_and_loss_carryforward(self):
+    def test_controller_has_absolute_and_concentration_limits(self):
+        text = (V15 / "V15SolvencyController.sol").read_text()
+        self.assertIn("minRiskAssets1e18", text)
+        self.assertIn("maxSingleAssetConcentrationBps", text)
+        self.assertRegex(text, r"function searcherRouteAllowed\(\)")
+        self.assertIn("mode == Mode.GREEN || mode == Mode.YELLOW", text)
+
+    def test_revenue_has_single_settlement_loss_carryforward_and_accounted_custody(self):
         text = (V15 / "V15RevenueRouter.sol").read_text()
         self.assertIn("lossCarryforward1e18", text)
         self.assertIn("periodSettled", text)
         self.assertIn("if (!periodOpen || periodSettled", text)
         self.assertIn("if (!periodOpen || !periodSettled)", text)
+        self.assertIn("ledger.isHardAccount(token, address(this))", text)
 
     def test_restore_and_close_remain_available_in_emergency(self):
         text = (V15 / "V15Coordinator.sol").read_text()

@@ -40,6 +40,22 @@ External payer / bank / merchant / FXP / exchange settlement
 
 This historical bridge is therefore `REJECTED` as a source of HardNAV, external reserve or distributable profit.
 
+### Own-sovereign bonds held by the same consolidated CB -> external backing
+
+The historical V6 asset elevator includes central-bank holdings of the same sovereign's bonds, after a haircut, as part of the asset side covering emission debt.
+
+That treatment is not valid when the accounting perimeter consolidates Treasury and the central bank. The sovereign bond asset held by the CB and the sovereign liability issued by Treasury are an intra-group claim and cancel on consolidation. They may still matter operationally for collateral, duration, monetary transmission and legal-entity liquidity, but they are not new external net wealth for the consolidated SINERGY public balance sheet.
+
+Canonical rule:
+
+```text
+Treasury liability to own consolidated CB
++ CB claim on own Treasury
+= eliminate on consolidation
+```
+
+The claim may be included in HardNAV/elevator backing only when the accounting perimeter explicitly excludes the issuer and the claim is externally enforceable/redeemable against a legally separate balance sheet. The perimeter must be disclosed. Otherwise this channel is `REJECTED` as external backing.
+
 ### DAO token-price feedback -> wealth
 
 A pass-through from a macro market index into an internal DAO token price may remain an experimental market-model feature. It must not feed HardNAV, reserve coverage, mint capacity or distributable profit until there is an executable external exit and realised settlement.
@@ -103,11 +119,12 @@ MetaPay remains a separate execution boundary. Payment/FX quotes may create reve
 
 ## Audit rule
 
-A future reuse of any historical AICB/DAO mechanism must answer four questions before it becomes canonical:
+A future reuse of any historical AICB/DAO mechanism must answer five questions before it becomes canonical:
 
 1. What exact external asset or performing claim appears?
 2. What exact external liability is created or extinguished?
-3. What journal entry proves conservation?
-4. What happens under withdrawal/default/oracle/bridge/MIDAS stress?
+3. What is the legal/consolidation perimeter of both sides of the claim?
+4. What journal entry proves conservation after intra-group elimination?
+5. What happens under withdrawal/default/oracle/bridge/MIDAS stress?
 
 If these cannot be answered, the mechanism remains `EXPERIMENTAL` or `REJECTED`.

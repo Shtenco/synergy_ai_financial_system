@@ -6,6 +6,7 @@ interface IV15EconomicLedgerAdapter {
     function isHardAccount(address token, address account) external view returns (bool);
     function isHardAsset(address token) external view returns (bool);
     function markValue1e18(address token, uint256 amount) external view returns (uint256);
+    function permanentlyExcludedAsset(address token) external view returns (bool);
 }
 
 interface IV15PostRouteGateAdapter {
@@ -18,6 +19,7 @@ interface IV15CoverageAdapter {
 
 interface IV15GradientActiveView {
     function active() external view returns (bool);
+    function usdx() external view returns (address);
 }
 
 /// @notice Dual compatibility layer for frozen V13.1 GraphArbExecutor AND
@@ -36,9 +38,10 @@ contract V15AccountingAdapter {
 
     event SyntheticProtocolAccountSet(address indexed account, bool enabled);
     event SyntheticPoolAccountSet(address indexed account, bool enabled);
-    event GradientEngineRegistered(address indexed engine, bool enabled);
+    event GradientEngineRegistered(address indexed engine, address indexed synthetic, bool enabled);
     error Unauthorized();
     error BadConfig();
+    error SyntheticNotPermanentlyExcluded();
 
     constructor(address owner_, address liquidityOwner_, address ledger_, address gate_, address controller_) {
         if (
@@ -69,8 +72,17 @@ contract V15AccountingAdapter {
 
     function setGradientEngine(address engine, bool enabled) external onlyOwner {
         if (engine == address(0)) revert BadConfig();
+        address synthetic = IV15GradientActiveView(engine).usdx();
+        if (synthetic == address(0)) revert BadConfig();
+        if (enabled) {
+            // A registered monetary synthetic can never later be promoted into
+            // Economic HardAssets. The ledger exclusion is irreversible.
+            if (!ledger.permanentlyExcludedAsset(synthetic) || ledger.isHardAsset(synthetic)) {
+                revert SyntheticNotPermanentlyExcluded();
+            }
+        }
         registeredGradientEngine[engine] = enabled;
-        emit GradientEngineRegistered(engine, enabled);
+        emit GradientEngineRegistered(engine, synthetic, enabled);
     }
 
     /// @dev Frozen executor calls this both pre- and post-route. If post-route

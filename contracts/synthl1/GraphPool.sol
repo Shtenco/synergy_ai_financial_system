@@ -8,15 +8,18 @@ interface IMEVCapturePool {
     function checkpoint(address token, uint256 amount) external;
 }
 
-/// @notice Generic constant-product graph pool with an LP fee and a separate
-/// directional output toll. Deploy many instances to form the internal graph.
+interface IERC20ManagedPool {
+    function balanceOf(address account) external view returns (uint256);
+}
+
+/// @notice Generic constant-product graph pool used by the SynthL1 internal graph.
+/// token0 is the protocol-controlled synthetic reserve in managed gradient pools.
+/// token1 is the real/quote asset (USDT/USDC/WPOL/WETH/DAI/... ).
 ///
-/// For managed SynthL1 pulse pools, the owner may:
-/// - gate CORE->USDx (zeroToOne) through the taxed GraphArbExecutor; and
-/// - restrict liquidity additions to one protocol liquidity manager.
-///
-/// The LP restriction prevents a third party from adding a tiny LP position and
-/// griefing the recursive engine's 100%-protocol-owned pulse-pool invariant.
+/// A managed pool can simultaneously enforce:
+/// - 100% protocol LP ownership via the liquidity-manager gate;
+/// - executor-only token0->token1 closing flow so realized-profit MEV tax cannot be bypassed;
+/// - a ReserveGradientEngine controller that may debit token0 reserve and sync actual balances.
 contract GraphPool {
     using SafeTransferLib for address;
 
@@ -30,6 +33,8 @@ contract GraphPool {
 
     address public liquidityManager;
     bool public restrictLiquidityProviders;
+
+    address public gradientController;
 
     uint16 public lpFeeBps = 30;
     bool public paused;
@@ -47,17 +52,22 @@ contract GraphPool {
     event Paused(bool value);
     event ArbExecutorSet(address indexed executor, bool restrictZeroToOne);
     event LiquidityManagerSet(address indexed manager, bool restricted);
+    event GradientControllerSet(address indexed controller);
+    event GradientDebit(uint256 token0Amount, address indexed to, uint256 reserve0After);
+    event ManagedSync(uint256 reserve0, uint256 reserve1);
 
     error Unauthorized();
     error BadConfig();
     error Slippage();
     error Reentrancy();
     error PausedError();
+    error InsufficientLiquidity();
 
     constructor(address token0_, address token1_, address capture_, address owner_) {
-        if (token0_ == address(0) || token1_ == address(0) || token0_ == token1_ || capture_ == address(0) || owner_ == address(0)) {
-            revert BadConfig();
-        }
+        if (
+            token0_ == address(0) || token1_ == address(0) || token0_ == token1_ ||
+            capture_ == address(0) || owner_ == address(0)
+        ) revert BadConfig();
         token0 = token0_;
         token1 = token1_;
         capture = IMEVCapturePool(capture_);
@@ -66,6 +76,7 @@ contract GraphPool {
     }
 
     modifier onlyOwner(){ if (msg.sender != owner) revert Unauthorized(); _; }
+    modifier onlyGradientController(){ if (msg.sender != gradientController) revert Unauthorized(); _; }
     modifier active(){ if (paused) revert PausedError(); _; }
     modifier nonReentrant(){ if (lockState != 1) revert Reentrancy(); lockState = 2; _; lockState = 1; }
 
@@ -87,13 +98,21 @@ contract GraphPool {
         emit ArbExecutorSet(executor, restrictDirection);
     }
 
-    /// @notice Managed pulse pools should set `restricted=true` and manager to
-    /// the same protocolLiquidityOwner configured in SystemAccounting/Engine.
+    /// @notice Managed gradient pools should set restricted=true and manager to
+    /// the same protocolLiquidityOwner configured in SystemAccounting/GradientEngine.
     function setLiquidityManager(address manager, bool restricted) external onlyOwner {
         if (restricted && manager == address(0)) revert BadConfig();
         liquidityManager = manager;
         restrictLiquidityProviders = restricted;
         emit LiquidityManagerSet(manager, restricted);
+    }
+
+    /// @notice Grants only the reserve-gradient controller the ability to move
+    /// the protocol-controlled token0 reserve. It never grants token1 withdrawal rights.
+    function setGradientController(address controller) external onlyOwner {
+        if (controller == address(0)) revert BadConfig();
+        gradientController = controller;
+        emit GradientControllerSet(controller);
     }
 
     function addLiquidity(uint256 amount0, uint256 amount1, uint256 minShares)
@@ -137,6 +156,29 @@ contract GraphPool {
         token0.safeTransfer(msg.sender, amount0);
         token1.safeTransfer(msg.sender, amount1);
         emit LiquidityRemoved(msg.sender, amount0, amount1, s);
+    }
+
+    /// @notice Supply-neutral gradient primitive. Only token0 can be debited.
+    /// The controller must burn the received token0 and mint the same amount into
+    /// another protocol-owned managed pool in the same transaction.
+    function gradientDebitToken0(uint256 amount, address to)
+        external onlyGradientController nonReentrant active
+    {
+        if (to == address(0) || amount == 0 || amount >= reserve0) revert BadConfig();
+        reserve0 -= amount;
+        token0.safeTransfer(to, amount);
+        emit GradientDebit(amount, to, reserve0);
+    }
+
+    /// @notice Reconciles reserves to actual balances after a controller mint or
+    /// quote-asset reinvestment. Only the gradient controller may invoke it.
+    function syncManagedReserves() external onlyGradientController nonReentrant active {
+        uint256 b0 = IERC20ManagedPool(token0).balanceOf(address(this));
+        uint256 b1 = IERC20ManagedPool(token1).balanceOf(address(this));
+        if (b0 == 0 || b1 == 0) revert InsufficientLiquidity();
+        reserve0 = b0;
+        reserve1 = b1;
+        emit ManagedSync(b0, b1);
     }
 
     function quoteExactIn(bool zeroToOne, uint256 amountIn)
@@ -193,6 +235,11 @@ contract GraphPool {
 
     function spot1Per0() external view returns (uint256) {
         return reserve0 == 0 ? 0 : (reserve1 * 1e18) / reserve0;
+    }
+
+    function actualBalances() external view returns (uint256 balance0, uint256 balance1) {
+        balance0 = IERC20ManagedPool(token0).balanceOf(address(this));
+        balance1 = IERC20ManagedPool(token1).balanceOf(address(this));
     }
 
     function _sqrt(uint256 y) private pure returns (uint256 z) {

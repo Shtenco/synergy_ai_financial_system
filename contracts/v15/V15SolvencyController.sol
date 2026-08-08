@@ -113,6 +113,7 @@ contract V15SolvencyController {
     }
 
     function setMinHardNAV1e18(int256 value) external onlyOwner {
+        if (value < 0) revert BadConfig();
         minHardNAV1e18 = value;
         emit MinHardNAVSet(value);
     }
@@ -231,8 +232,6 @@ contract V15SolvencyController {
         return true;
     }
 
-    /// @notice Survival solvency. ORANGE may satisfy this because ORANGE is the
-    /// state in which unwind/restore is still possible.
     function routeSolvent() public view returns (bool) {
         (int256 nav, uint256 riskAssets,, uint256 k, uint256 s) = metrics();
         if (nav < minHardNAV1e18 || mode == Mode.RED || !_portfolioLimitsSatisfied(riskAssets)) return false;
@@ -242,8 +241,6 @@ contract V15SolvencyController {
         return k >= t.orangeCoverageBps && s >= t.orangeSTSBps;
     }
 
-    /// @notice New V13.1 searcher exploitation is permitted only in GREEN/YELLOW
-    /// and while independent guardian emergency stop is clear.
     function searcherRouteAllowed() public view returns (bool) {
         return !emergencyPaused && (mode == Mode.GREEN || mode == Mode.YELLOW) && routeSolvent();
     }
@@ -259,12 +256,59 @@ contract V15SolvencyController {
         return 0;
     }
 
+    /// @notice Conservative canonical-USD amount that may leave the protocol
+    /// while still preserving HardNAV floor, distribution K/STS floors and the
+    /// absolute risk-capital floor. Concentration remains a post-transfer gate.
+    function distributionHeadroom1e18() public view returns (uint256 headroom) {
+        if (emergencyPaused || mode != Mode.GREEN) return 0;
+        (int256 nav, uint256 riskAssets, uint256 riskLiabilities,,) = metrics();
+        if (nav <= minHardNAV1e18 || !_portfolioLimitsSatisfied(riskAssets)) return 0;
+
+        headroom = uint256(nav - minHardNAV1e18);
+        Thresholds memory t = thresholds;
+        PortfolioLimits memory p = portfolioLimits;
+
+        uint256 requiredBaseAssets = (riskLiabilities * uint256(t.distributionCoverageBps)) / 10_000;
+        if (riskAssets <= requiredBaseAssets) return 0;
+        uint256 baseHeadroom = riskAssets - requiredBaseAssets;
+        if (baseHeadroom < headroom) headroom = baseHeadroom;
+
+        if (riskAssets <= p.minRiskAssets1e18) return 0;
+        uint256 absoluteHeadroom = riskAssets - p.minRiskAssets1e18;
+        if (absoluteHeadroom < headroom) headroom = absoluteHeadroom;
+
+        uint256 sc = riskOracle.scenarioCount();
+        if (sc == 0) return 0;
+        bool anyEnabled;
+        uint256 n = ledger.assetCount();
+        for (uint256 s; s < sc; ++s) {
+            (, uint16 liabilityStressBps, uint256 fixedCost, bool enabled) = riskOracle.scenarioInfo(s);
+            if (!enabled) continue;
+            anyEnabled = true;
+
+            uint256 stressedAssets;
+            for (uint256 i; i < n; ++i) {
+                address token = ledger.assetAt(i);
+                stressedAssets += riskOracle.scenarioRiskValue1e18(
+                    token,
+                    ledger.assetBalance(token),
+                    ledger.assetDecimals(token),
+                    s
+                );
+            }
+            if (stressedAssets <= fixedCost) return 0;
+            stressedAssets -= fixedCost;
+            uint256 stressedLiabilities = (riskLiabilities * uint256(liabilityStressBps)) / 10_000;
+            uint256 requiredStressAssets = (stressedLiabilities * uint256(t.distributionSTSBps)) / 10_000;
+            if (stressedAssets <= requiredStressAssets) return 0;
+            uint256 stressHeadroom = stressedAssets - requiredStressAssets;
+            if (stressHeadroom < headroom) headroom = stressHeadroom;
+        }
+        if (!anyEnabled) return 0;
+    }
+
     function distributionAllowed() external view returns (bool) {
-        if (emergencyPaused) return false;
-        (int256 nav, uint256 riskAssets,, uint256 k, uint256 s) = metrics();
-        return mode == Mode.GREEN && nav >= minHardNAV1e18 &&
-            _portfolioLimitsSatisfied(riskAssets) &&
-            k >= thresholds.distributionCoverageBps && s >= thresholds.distributionSTSBps;
+        return distributionHeadroom1e18() > 0;
     }
 
     function pokeMode() external returns (Mode next) {

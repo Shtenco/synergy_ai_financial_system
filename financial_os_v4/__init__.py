@@ -17,6 +17,12 @@ from .core import (
     TripleMoneyLedger,
 )
 from .p2p import DurationFundingBook, FundingTranche, LoanPosition, LoanRequest
+from .productive_credit import (
+    ProductiveCapacity,
+    ProductiveCreditRequest,
+    VerificationPolicy,
+    VerifierAttestation,
+)
 from .snapshot import FinancialSnapshot
 
 __all__ = [
@@ -34,5 +40,9 @@ __all__ = [
     "MonetaryState",
     "PolicyBounds",
     "PolicyDecision",
+    "ProductiveCapacity",
+    "ProductiveCreditRequest",
     "TripleMoneyLedger",
+    "VerificationPolicy",
+    "VerifierAttestation",
 ]

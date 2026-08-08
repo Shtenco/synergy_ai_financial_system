@@ -77,11 +77,15 @@ class LoanPosition:
 
 @dataclass
 class DurationFundingBook:
-    """Reference P2P book with explicit maturity and encumbrance accounting.
+    """Reference P2P book with explicit maturity and impairment accounting.
 
     Funding is never double-counted. A loan may use only tranches whose unlock
     occurs strictly after the loan due week. The global credit share limits total
     outstanding principal relative to currently active savings principal.
+
+    A written-off principal creates `uncovered_credit_loss`. Even after funding
+    tranches are released, that impairment reduces new credit capacity until an
+    explicit reserve/insurance/first-loss transfer covers it.
     """
 
     max_credit_share: float = 0.45
@@ -89,11 +93,12 @@ class DurationFundingBook:
     loans: dict[int, LoanPosition] = field(default_factory=dict)
     realized_interest_income: float = 0.0
     realized_credit_losses: float = 0.0
+    uncovered_credit_loss: float = 0.0
     _loan_ids: count = field(default_factory=lambda: count(1), repr=False)
 
     def __post_init__(self) -> None:
-        if not 0 <= self.max_credit_share <= 1:
-            raise ValueError("max_credit_share must be in [0,1]")
+        if not isfinite(self.max_credit_share) or not 0 <= self.max_credit_share <= 1:
+            raise ValueError("max_credit_share must be finite and in [0,1]")
 
     def add_funding(self, owner_id: str, amount: float, unlock_week: int) -> int:
         tranche = FundingTranche(owner_id, amount, unlock_week)
@@ -101,6 +106,8 @@ class DurationFundingBook:
         return len(self.tranches) - 1
 
     def active_savings_principal(self, week: int) -> float:
+        if week < 0:
+            raise ValueError("week cannot be negative")
         return sum(t.amount for t in self.tranches if t.unlock_week > week)
 
     def outstanding_principal(self) -> float:
@@ -111,7 +118,8 @@ class DurationFundingBook:
         )
 
     def credit_cap(self, week: int) -> float:
-        return self.active_savings_principal(week) * self.max_credit_share
+        gross_cap = self.active_savings_principal(week) * self.max_credit_share
+        return max(0.0, gross_cap - self.uncovered_credit_loss)
 
     def lendable_capacity(self, request: LoanRequest) -> float:
         maturity_eligible = sum(
@@ -149,7 +157,6 @@ class DurationFundingBook:
             remaining -= amount
 
         if remaining > EPS:
-            # Defensive rollback: no partial origination remains committed.
             for funding_slice in slices:
                 self.tranches[funding_slice.tranche_index].committed -= funding_slice.amount
             raise RuntimeError("atomic funding allocation failed")
@@ -201,11 +208,26 @@ class DurationFundingBook:
         loan.outstanding_principal = max(0.0, loan.outstanding_principal - loss_principal)
         loan.realized_loss += loss_principal
         self.realized_credit_losses += loss_principal
+        self.uncovered_credit_loss += loss_principal
         if loan.outstanding_principal <= EPS:
             loan.outstanding_principal = 0.0
             loan.status = "DEFAULTED"
             self._release_funding(loan)
         return loan
+
+    def cover_credit_loss(self, amount: float) -> float:
+        """Apply actual reserve/insurance/first-loss capital to an impairment.
+
+        This restores lending capacity; it is not booked here as P2P interest or
+        profit. Consolidated accounting decides whether the transfer is internal
+        risk allocation or genuinely new external capital.
+        """
+
+        if not isfinite(amount) or amount <= 0:
+            raise ValueError("coverage amount must be finite and positive")
+        applied = min(amount, self.uncovered_credit_loss)
+        self.uncovered_credit_loss = max(0.0, self.uncovered_credit_loss - applied)
+        return applied
 
     @property
     def net_realized_credit_result(self) -> float:

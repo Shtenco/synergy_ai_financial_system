@@ -50,7 +50,6 @@ async function setup() {
     await risk.getAddress()
   );
 
-  // RED -> ORANGE -> YELLOW -> GREEN through hysteresis re-entry.
   await (await controller.pokeMode()).wait();
   await (await controller.pokeMode()).wait();
   await (await controller.pokeMode()).wait();
@@ -69,6 +68,18 @@ async function setup() {
   return { owner, outsider, usdc, synthetic, oracle, liabilities, liabilityId, ledger, risk, controller, gate, adapter };
 }
 
+async function revenueRouter(c) {
+  const router = await deploy(
+    "V15RevenueRouter",
+    c.owner.address,
+    c.owner.address,
+    await c.ledger.getAddress(),
+    await c.controller.getAddress()
+  );
+  await (await c.ledger.setHardAccount(await c.usdc.getAddress(), await router.getAddress(), true)).wait();
+  return router;
+}
+
 describe("V15 economic/risk overlay", function () {
   this.timeout(120000);
 
@@ -81,32 +92,30 @@ describe("V15 economic/risk overlay", function () {
     assert.equal(metrics[3], 20000n, "coverage must be 200%");
     assert.equal(metrics[4], 20000n, "STS must be 200%");
 
-    // Re-enabling an account must not duplicate it in the ledger array.
     await (await c.ledger.setHardAccount(await c.usdc.getAddress(), c.owner.address, false)).wait();
     await (await c.ledger.setHardAccount(await c.usdc.getAddress(), c.owner.address, true)).wait();
     assert.equal(await c.ledger.hardAssets1e18(), E(200), "account re-enable must not double count assets");
 
-    // A liability shock pushes coverage below the ORANGE floor. Economic NAV is
-    // still defined, but the compatibility adapter must refuse executor NAV reads.
     await (await c.liabilities.setManualAmount(c.liabilityId, E(195))).wait();
     assert.equal(await c.controller.routeSolvent(), false);
     assert.equal(await c.ledger.hardNAV1e18(), E(5));
     await mustRevert(c.adapter.consolidatedHardNAV1e18(), "unsafe route state must fail closed");
   });
 
-  it("distributes only settled hard profit and checks solvency again after transfer", async function () {
+  it("requires both HWM profit and physically swept eligible protocol revenue", async function () {
     const c = await setup();
-    const router = await deploy(
-      "V15RevenueRouter",
-      c.owner.address,
-      c.owner.address,
-      await c.ledger.getAddress(),
-      await c.controller.getAddress()
-    );
-    await (await c.ledger.setHardAccount(await c.usdc.getAddress(), await router.getAddress(), true)).wait();
-
+    const router = await revenueRouter(c);
+    await (await router.setRevenueSource(c.owner.address, true)).wait();
     await (await router.startPeriod()).wait();
-    await (await c.usdc.mint(await router.getAddress(), E(20))).wait(); // fixture external hard revenue
+
+    // Fixture realized hard gain appears first in an already-accounted protocol source.
+    await (await c.usdc.mint(c.owner.address, E(20))).wait();
+    await (await c.usdc.approve(await router.getAddress(), E(20))).wait();
+    await (await router.recordEligibleRevenueToken(
+      await c.usdc.getAddress(), c.owner.address, E(20)
+    )).wait();
+
+    assert.equal(await router.eligibleRevenue1e18(), E(20));
     await (await router.settlePeriod(E(5))).wait();
     assert.equal(await router.distributableBudget1e18(), E(15));
 
@@ -114,25 +123,29 @@ describe("V15 economic/risk overlay", function () {
     assert.equal(await c.usdc.balanceOf(c.outsider.address), E(10));
     await mustRevert(
       router.distribute(await c.usdc.getAddress(), c.outsider.address, E(6)),
-      "cannot exceed settled hard-profit budget"
+      "cannot exceed dual-gated hard-profit budget"
     );
-    await mustRevert(router.settlePeriod(0), "same period cannot be settled twice");
+  });
+
+  it("direct donation can raise HardNAV but cannot become distributable revenue without an eligible sweep", async function () {
+    const c = await setup();
+    const router = await revenueRouter(c);
+    await (await router.startPeriod()).wait();
+
+    await (await c.usdc.mint(c.outsider.address, E(20))).wait();
+    await (await c.usdc.connect(c.outsider).transfer(c.owner.address, E(20))).wait();
+    assert.equal(await c.ledger.hardNAV1e18(), E(120));
+
+    await (await router.settlePeriod(0)).wait();
+    assert.equal(await router.eligibleRevenue1e18(), 0n);
+    assert.equal(await router.distributableBudget1e18(), 0n);
   });
 
   it("physical external capital contribution does not masquerade as operating hard profit", async function () {
     const c = await setup();
-    const router = await deploy(
-      "V15RevenueRouter",
-      c.owner.address,
-      c.owner.address,
-      await c.ledger.getAddress(),
-      await c.controller.getAddress()
-    );
-    await (await c.ledger.setHardAccount(await c.usdc.getAddress(), await router.getAddress(), true)).wait();
+    const router = await revenueRouter(c);
     await (await router.startPeriod()).wait();
 
-    // outsider is not a protocol hard account. The only way this contribution is
-    // neutralized in PnL is by physically transferring it through the router.
     await (await c.usdc.mint(c.outsider.address, E(20))).wait();
     await (await c.usdc.connect(c.outsider).approve(await router.getAddress(), E(20))).wait();
     await (await router.recordContributionToken(
@@ -144,26 +157,26 @@ describe("V15 economic/risk overlay", function () {
     assert.equal(await router.distributableBudget1e18(), 0n);
   });
 
-  it("carries losses forward so simple NAV recovery cannot be re-labeled as new profit", async function () {
+  it("carries losses forward and requires eligible hard revenue after recovery", async function () {
     const c = await setup();
-    const router = await deploy(
-      "V15RevenueRouter",
-      c.owner.address,
-      c.owner.address,
-      await c.ledger.getAddress(),
-      await c.controller.getAddress()
-    );
+    const router = await revenueRouter(c);
+    await (await router.setRevenueSource(c.owner.address, true)).wait();
 
     await (await router.startPeriod()).wait();
-    await (await c.usdc.transfer(c.outsider.address, E(20))).wait(); // hard loss from protocol account
+    await (await c.usdc.transfer(c.outsider.address, E(20))).wait();
     await (await router.settlePeriod(0)).wait();
     assert.equal(await router.lossCarryforward1e18(), E(20));
     assert.equal(await router.distributableBudget1e18(), 0n);
     await (await router.closePeriod()).wait();
 
     await (await router.startPeriod()).wait();
-    await (await c.usdc.connect(c.outsider).transfer(c.owner.address, E(20))).wait(); // recover prior loss
-    await (await c.usdc.mint(c.owner.address, E(5))).wait(); // only 5 is new hard gain above recovery
+    await (await c.usdc.connect(c.outsider).transfer(c.owner.address, E(20))).wait();
+    await (await c.usdc.mint(c.owner.address, E(5))).wait();
+    await (await c.usdc.approve(await router.getAddress(), E(5))).wait();
+    await (await router.recordEligibleRevenueToken(
+      await c.usdc.getAddress(), c.owner.address, E(5)
+    )).wait();
+
     await (await router.settlePeriod(0)).wait();
     assert.equal(await router.lossCarryforward1e18(), 0n);
     assert.equal(await router.distributableBudget1e18(), E(5));

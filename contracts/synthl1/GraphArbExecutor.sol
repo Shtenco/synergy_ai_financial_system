@@ -14,8 +14,11 @@ interface ICaptureGraphExec {
 /// @notice Public atomic graph router for MEV/searcher cycles.
 /// The searcher supplies its own principal. Every venue must be allowlisted.
 /// A configurable tax is charged only on REALIZED base-token profit, never on
-/// principal or gross swap output. This preserves the route-size incentive much
-/// better than a large output toll and makes recursive capture measurable.
+/// principal or gross swap output.
+///
+/// Managed pulse pools may additionally require one settlement/base token (USDx
+/// in the recursive engine). This prevents closing the QE wedge with a CORE-based
+/// cycle that would pay the protocol tax in the wrong asset and bypass USDx recycling.
 contract GraphArbExecutor {
     using SafeTransferLib for address;
 
@@ -30,6 +33,7 @@ contract GraphArbExecutor {
 
     mapping(address => bool) public allowedTarget;
     mapping(address => address) public spenderForTarget;
+    mapping(address => address) public requiredBaseTokenForTarget;
 
     struct Leg {
         address target;
@@ -42,6 +46,7 @@ contract GraphArbExecutor {
     }
 
     event VenueSet(address indexed target, address indexed spender, bool allowed);
+    event RequiredBaseTokenSet(address indexed target, address indexed baseToken);
     event ProfitTaxSet(uint16 bps);
     event Cycle(
         address indexed searcher,
@@ -60,6 +65,7 @@ contract GraphArbExecutor {
     error ExternalCallFailed();
     error InsufficientOutput();
     error NotProfitable();
+    error WrongSettlementToken();
     error Reentrancy();
     error PausedError();
 
@@ -76,7 +82,15 @@ contract GraphArbExecutor {
         if (target == address(0) || spender == address(0)) revert BadRoute();
         allowedTarget[target] = allowed;
         spenderForTarget[target] = allowed ? spender : address(0);
+        if (!allowed) requiredBaseTokenForTarget[target] = address(0);
         emit VenueSet(target, spender, allowed);
+    }
+
+    /// @notice Set to zero for unrestricted settlement; set to USDx for managed pulse pools.
+    function setRequiredBaseToken(address target, address baseToken) external onlyOwner {
+        if (!allowedTarget[target]) revert VenueNotAllowed();
+        requiredBaseTokenForTarget[target] = baseToken;
+        emit RequiredBaseTokenSet(target, baseToken);
     }
 
     function setProfitTaxBps(uint16 bps) external onlyOwner {
@@ -112,6 +126,8 @@ contract GraphArbExecutor {
             Leg calldata leg = legs[i];
             if (leg.tokenIn != expected || leg.amountIn == 0 || leg.amountIn > available) revert BadRoute();
             if (!allowedTarget[leg.target] || spenderForTarget[leg.target] != leg.spender) revert VenueNotAllowed();
+            address requiredBase = requiredBaseTokenForTarget[leg.target];
+            if (requiredBase != address(0) && requiredBase != baseToken) revert WrongSettlementToken();
 
             leg.tokenIn.forceApprove(leg.spender, leg.amountIn);
             uint256 beforeOut = IERC20GraphExec(leg.tokenOut).balanceOf(address(this));

@@ -1,0 +1,37 @@
+name: market-experiment-handoff-v1
+
+on:
+  pull_request:
+    paths:
+      - 'sinergy_rnd_handoff/**'
+      - 'schemas/market_experiment_result_v1.schema.json'
+      - 'tests/test_market_experiment_handoff.py'
+      - 'tests/test_market_experiment_schema.py'
+      - 'docs/MARKET_EXPERIMENT_HANDOFF_V1_20260818.md'
+      - '.github/workflows/market-experiment-handoff-v1.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: market-experiment-handoff-v1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rnd-handoff:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+      - name: Compile R&D handoff package
+        run: python -m compileall -q sinergy_rnd_handoff
+      - name: Run market experiment regressions
+        run: >-
+          python -m pytest
+          tests/test_market_experiment_handoff.py
+          tests/test_market_experiment_schema.py
+          -q

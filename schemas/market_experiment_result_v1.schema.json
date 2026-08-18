@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sinergy.system/schemas/market.experiment-result/v1",
+  "title": "SINERGY Financial R&D MarketExperimentResult v1",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "decimal_nonnegative": {"type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$"},
+    "decimal_signed": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$"},
+    "hex64_or_null": {
+      "oneOf": [
+        {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"},
+        {"type": "null"}
+      ]
+    }
+  },
+  "required": [
+    "schema", "experiment_id", "experiment_class", "mode", "network",
+    "reporting_asset", "classification", "accounting_authority",
+    "revenue_evidence_digest", "execution_evidence_digest",
+    "external_assets_before", "external_liabilities_before",
+    "external_assets_after", "external_liabilities_after",
+    "net_new_external_capital", "externally_observed_revenue",
+    "gas_cost", "venue_fees", "bridge_fees", "flash_fees",
+    "other_external_costs", "total_external_costs", "mint_notional",
+    "flash_principal_peak", "internal_mark_change", "self_token_mark_change",
+    "external_nav_before", "external_nav_after",
+    "external_nav_surplus_after_capital", "external_pnl_candidate"
+  ],
+  "properties": {
+    "schema": {"const": "market.experiment-result/v1"},
+    "experiment_id": {"type": "string", "minLength": 1},
+    "experiment_class": {"enum": ["AMM", "QE_QT", "MEV", "FLASH", "GRAPH", "BRIDGE", "OTHER"]},
+    "mode": {"enum": ["SIMULATION", "FORK", "LIVE_OBSERVED"]},
+    "network": {"type": "string", "minLength": 1},
+    "reporting_asset": {"type": "string", "minLength": 1, "maxLength": 16},
+    "classification": {"const": "RND_ONLY"},
+    "accounting_authority": {"const": "Shtenco/synergy_financial_os"},
+    "revenue_evidence_digest": {"$ref": "#/$defs/hex64_or_null"},
+    "execution_evidence_digest": {"$ref": "#/$defs/hex64_or_null"},
+    "external_assets_before": {"$ref": "#/$defs/decimal_nonnegative"},
+    "external_liabilities_before": {"$ref": "#/$defs/decimal_nonnegative"},
+    "external_assets_after": {"$ref": "#/$defs/decimal_nonnegative"},
+    "external_liabilities_after": {"$ref": "#/$defs/decimal_nonnegative"},
+    "net_new_external_capital": {"$ref": "#/$defs/decimal_signed"},
+    "externally_observed_revenue": {"$ref": "#/$defs/decimal_nonnegative"},
+    "gas_cost": {"$ref": "#/$defs/decimal_nonnegative"},
+    "venue_fees": {"$ref": "#/$defs/decimal_nonnegative"},
+    "bridge_fees": {"$ref": "#/$defs/decimal_nonnegative"},
+    "flash_fees": {"$ref": "#/$defs/decimal_nonnegative"},
+    "other_external_costs": {"$ref": "#/$defs/decimal_nonnegative"},
+    "total_external_costs": {"$ref": "#/$defs/decimal_nonnegative"},
+    "mint_notional": {"$ref": "#/$defs/decimal_nonnegative"},
+    "flash_principal_peak": {"$ref": "#/$defs/decimal_nonnegative"},
+    "internal_mark_change": {"$ref": "#/$defs/decimal_signed"},
+    "self_token_mark_change": {"$ref": "#/$defs/decimal_signed"},
+    "external_nav_before": {"$ref": "#/$defs/decimal_signed"},
+    "external_nav_after": {"$ref": "#/$defs/decimal_signed"},
+    "external_nav_surplus_after_capital": {"$ref": "#/$defs/decimal_signed"},
+    "external_pnl_candidate": {"$ref": "#/$defs/decimal_signed"}
+  }
+}

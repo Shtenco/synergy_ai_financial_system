@@ -1,0 +1,26 @@
+name: MetaPay External Profit Evidence v1
+
+on:
+  pull_request:
+    paths:
+      - 'simulation/metapay_external_profit_evidence.py'
+      - 'tests/test_metapay_external_profit_evidence.py'
+      - 'docs/METAPAY_EXTERNAL_PROFIT_BUS_INTEGRATION.md'
+      - '.github/workflows/metapay-external-profit-evidence-v1.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run adapter tests
+        run: python -m unittest tests.test_metapay_external_profit_evidence -v
+      - name: Compile adapter
+        run: python -m py_compile simulation/metapay_external_profit_evidence.py

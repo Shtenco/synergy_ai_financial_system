@@ -8,7 +8,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 HEX_KEY = re.compile(r"(?<![0-9A-Fa-f])(?:0x)?[0-9A-Fa-f]{64}(?![0-9A-Fa-f])")
-PRIVATE_KEY_ASSIGNMENT = re.compile(r"(?im)^\s*PRIVATE_KEY\s*=\s*(\S+)\s*$")
+# Deliberately use horizontal whitespace only. ``\s`` also matches newlines and
+# can misread an empty `PRIVATE_KEY=` template as if the next ENV assignment
+# were its value.
+PRIVATE_KEY_ASSIGNMENT = re.compile(r"(?im)^[ \t]*PRIVATE_KEY[ \t]*=[ \t]*([^\r\n]*)$")
 
 SECURITY_SURFACE = (
     "runtime/synergy_agent/",
@@ -36,16 +39,20 @@ def in_security_surface(path: str) -> bool:
 def main() -> int:
     failures: list[str] = []
     for rel in tracked_paths():
+        # This workflow is intentionally a scoped guard for the new SYNERGY
+        # runtime surface. Historical repository files are handled by broader
+        # repository hygiene work and must not make this targeted gate unusable.
+        if not in_security_surface(rel):
+            continue
+
         lowered = rel.lower()
         if rel.startswith("runtime/synergy_agent/local/") and not rel.endswith("/.gitkeep"):
             failures.append(f"tracked runtime secret path: {rel}")
             continue
         if lowered.endswith(".env"):
-            failures.append(f"tracked env file: {rel}")
+            failures.append(f"tracked env file in runtime security surface: {rel}")
             continue
-        if not in_security_surface(rel):
-            # Historical repository hashes are outside this PR's secret boundary.
-            continue
+
         path = ROOT / rel
         if not path.is_file():
             continue

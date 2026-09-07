@@ -1,0 +1,47 @@
+name: AICB V5 Productive Monetary System
+
+on:
+  push:
+    paths:
+      - 'ai_centrobank/productive_v5_policy.py'
+      - 'tests/test_aicb_v5_policy.py'
+      - 'contracts/centralbank/ProductiveMonetaryEscrowV2.sol'
+      - 'contracts/test/MockControlledEmissionTokenV1.sol'
+      - 'test/productive_monetary_escrow_v2.js'
+      - 'docs/AICB_V5_PRODUCTIVE_MONETARY_SYSTEM.md'
+      - 'hardhat.config.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/aicb-v5-productive-monetary-system.yml'
+  pull_request:
+    paths:
+      - 'ai_centrobank/productive_v5_policy.py'
+      - 'tests/test_aicb_v5_policy.py'
+      - 'contracts/centralbank/ProductiveMonetaryEscrowV2.sol'
+      - 'contracts/test/MockControlledEmissionTokenV1.sol'
+      - 'test/productive_monetary_escrow_v2.js'
+      - 'docs/AICB_V5_PRODUCTIVE_MONETARY_SYSTEM.md'
+      - 'hardhat.config.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/aicb-v5-productive-monetary-system.yml'
+
+jobs:
+  policy-and-dual-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test bounded AICB V5 policy
+        run: python -m unittest tests.test_aicb_v5_policy -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npx hardhat compile
+      - name: Test two-key escrow
+        run: npx hardhat test test/productive_monetary_escrow_v2.js

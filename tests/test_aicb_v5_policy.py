@@ -57,6 +57,33 @@ class AICBV5PolicyTests(unittest.TestCase):
         )
         self.assertLessEqual(proposal.requested_emission, 500.0)
 
+    def test_regression_matches_uploaded_productive_liquidity_v4_initial_policy(self):
+        # Exact default-state inputs measured from the uploaded Productive
+        # Liquidity Protocol V4. This anchors V5 policy lineage mathematically
+        # while execution/attestation authority remains outside the AI policy.
+        snapshot = EconomicSnapshotV5(
+            period_id="V4-default-initial",
+            monthly_inflation=0.0,
+            target_monthly_inflation=0.004,
+            inflation_tolerance=0.010,
+            reserve_cover=17.5,
+            min_reserve_cover=0.22,
+            target_reserve_cover=0.45,
+            goods_growth=0.0,
+            capacity_growth=0.0,
+            employment_rate=0.9245117473900628,
+            money_to_goods=1.0637871549564564,
+            target_money_to_goods=1.05,
+            available_matching_capital=10539.998103922999,
+            required_match_ratio=0.85,
+            max_period_emission=850.0,
+            physical_consistency_gap=0.0,
+            supply_accounting_gap=0.0,
+        )
+        proposal = AICBPolicyV5.evaluate(snapshot)
+        self.assertAlmostEqual(proposal.requested_emission, 534.5298926330228, places=10)
+        self.assertAlmostEqual(proposal.raw_policy_limit, 534.5298926330228, places=10)
+
 
 if __name__ == "__main__":
     unittest.main()

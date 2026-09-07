@@ -8,7 +8,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 HEX_KEY = re.compile(r"(?<![0-9A-Fa-f])(?:0x)?[0-9A-Fa-f]{64}(?![0-9A-Fa-f])")
-PRIVATE_KEY_ASSIGNMENT = re.compile(r"(?im)^\s*PRIVATE_KEY\s*=\s*(\S+)\s*$")
+# Deliberately use horizontal whitespace only. ``\s`` also matches newlines and
+# can misread an empty `PRIVATE_KEY=` template as if the next ENV assignment
+# were its value.
+PRIVATE_KEY_ASSIGNMENT = re.compile(r"(?im)^[ \t]*PRIVATE_KEY[ \t]*=[ \t]*([^\r\n]*)$")
 
 SECURITY_SURFACE = (
     "runtime/synergy_agent/",

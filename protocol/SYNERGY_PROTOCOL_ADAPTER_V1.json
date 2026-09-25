@@ -1,0 +1,31 @@
+{
+  "profile": "SYNERGY-PROTOCOL-ADAPTER/V1",
+  "status": "PENDING_CANONICAL_PR_24_GREEN_AND_MERGE",
+  "canonical_repository": "Shtenco/synergy_ai_blockchain",
+  "canonical_pr": 24,
+  "canonical_candidate_sha": "e889f3b933da1e4d07efe5a3d68db33606172cce",
+  "role": "legacy_syna_economics_adapter",
+  "local_authority": [
+    "tokenomic_research",
+    "treasury_research",
+    "polygon_fork_evidence"
+  ],
+  "explicitly_forbidden_authority": [
+    "consensus",
+    "canonical_syna_mint"
+  ],
+  "pq_policy": {
+    "production_lane": "ML-KEM-1024 + ML-DSA-87 + SLH-DSA-SHAKE-256s",
+    "pi_pq_lane": "EXPERIMENTAL_NON_AUTHORITATIVE"
+  },
+  "evm_policy": {
+    "ethereum_l1_l2_compatibility": "consume canonical profile",
+    "pq_authorization_additive": true,
+    "legacy_downgrade_for_pq_only": false
+  },
+  "syna_policy": {
+    "mechanism": "PROOF_OF_USEFUL_INFERENCE",
+    "mint_authority": "Shtenco/synergy_ai_blockchain only",
+    "no_verified_finalized_inference_no_worker_mint": true
+  }
+}

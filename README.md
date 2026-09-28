@@ -150,3 +150,36 @@ flowchart LR
 `GREEN` присваивается только воспроизводимым утверждениям. Исследовательский код, диаграмма или заявленная метрика без проверяемого artifact trail остаются `R&D/CANDIDATE`.
 
 <!-- SYNERGY-FEDERATION-PASSPORT:END -->
+
+---
+
+# 🏦 Глубокий технический паспорт AI Financial System
+
+## Реальный состав `main`
+
+Solidity contracts + Python simulations + Hardhat/fork preflight + solver-auction tooling. Это R&D интеграционный полигон для flash/arbitrage/QE/orderflow/MEV/treasury идей.
+
+```mermaid
+flowchart LR
+    SIM[🐍 Simulation] --> POLICY[AI/Graph policy]
+    POLICY --> CONTRACTS[⛓️ Solidity contracts]
+    CONTRACTS --> FORK[🧪 Fork preflight]
+    FORK --> EVID[📦 Evidence / limitations]
+```
+
+## Хорошая граница уже присутствует
+
+`DUAL_CIRCUIT_SOLVENCY_REVIEW.md` принимает только realized Polygon assets как LNAV и трактует controlled L1 prices как internal marks. Это правильный economic firewall.
+
+## Реальные evidence anchors
+
+- `docs/SECURITY_AUDIT.md`;
+- `docs/GRAPH_ARBITRAGE_QE_RESULTS.md`;
+- `docs/ORDERFLOW_REVENUE.md`;
+- `simulation/*.py`;
+- `tests/test_*.py`;
+- `scripts/fork_preflight.js`.
+
+## Следующий рубеж
+
+единая double-entry surface → exact fork receipts → external solver revenue attribution → debt/liability reconciliation → Financial OS import contract.

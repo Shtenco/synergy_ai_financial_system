@@ -119,3 +119,34 @@ API key in source code, command history, logs, or a pull request.
 Do not use any private key posted in chat or committed elsewhere. Treat a shared
 key as compromised, move assets to a freshly generated wallet, and rotate the
 provider credentials before performing deployment or administration.
+
+
+<!-- SYNERGY-FEDERATION-PASSPORT:START -->
+---
+
+## 🧭 SYNERGY federation passport
+
+**Домен:** 💰 AI financial R&D  
+**Архитектурный родитель:** [`synergy_financial_os`](https://github.com/Shtenco/synergy_financial_os)  
+**Архитектурный корень:** [`synergy_system`](https://github.com/Shtenco/synergy_system)
+
+```mermaid
+flowchart LR
+    SYS[🧭 synergy_system] --> P[synergy_financial_os]
+    P --> THIS[synergy_ai_financial_system]
+    THIS --> E[📦 Evidence / outputs]
+```
+
+Эта диаграмма фиксирует место в документационной федерации. Реальная code/runtime dependency должна подтверждаться отдельными артефактами.
+
+### Навигация
+
+- [📚 Атлас всех 75 репозиториев](https://github.com/Shtenco/synergy_system/blob/main/docs/SYNERGY_REPOSITORY_ATLAS.md)
+- [🧾 Машиночитаемый registry](https://github.com/Shtenco/synergy_system/blob/main/registry/SYNERGY_REPOSITORIES.json)
+- [🧭 SYNERGY SYSTEM](https://github.com/Shtenco/synergy_system)
+
+### Evidence rule
+
+`GREEN` присваивается только воспроизводимым утверждениям. Исследовательский код, диаграмма или заявленная метрика без проверяемого artifact trail остаются `R&D/CANDIDATE`.
+
+<!-- SYNERGY-FEDERATION-PASSPORT:END -->

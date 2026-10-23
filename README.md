@@ -1,185 +1,30 @@
-# SHTENCO ai_financial_system
+<img src="assets/readme/hero.svg" width="100%" alt="SYNERGY FINANCIAL SYSTEM / GRAPH ECONOMY"/>
 
-## DeFi TOP AI v3
+# SYNERGY FINANCIAL SYSTEM / GRAPH ECONOMY
 
-Unified architecture:
+**Integer AMM cycles, collateral and bridge solvency, anti-MEV and contract guardrails.**
 
-- Flash Loan Arbitrage
-- AI Central Bank
-- AI Market Maker
-- Value Flow Treasury
-- QE and Bridge QE modules
-- Economic State Oracle
-- DeFi Contour Registry
-- Monte Carlo internal market simulation
+## Research proposition and implemented work
 
-## Repository structure
+The architecture includes Solidity contracts for settlement-sensitive liquidity actions, treasury and anti-MEV control surfaces, a deterministic integer CPMM graph enumerator, USDT settlement with flash fees and transfer taxes, and a dual-circuit model distinguishing real Polygon POL reserves from internal synthetic balances.
 
-```
-contracts/          Solidity smart contracts
-ai_centrobank/     AI policy and optimization engine
-simulation/        Python economic simulations
-docs/              Architecture and audit documents
-scripts/           Deployment and testing scripts
-```
+## Mathematical and scientific interpretation
 
-## Security
+With token reserves x, y, fee f and positive input a, ideal non-rounded CPMM output is x*a*(1-f)/(y+a*(1-f)). An opportunity is positive only when USDT output exceeds principal, flash premium, gas and all real external costs. A token repricing does not create redeemable external LNAV.
 
-No private keys, seed phrases, RPC secrets or `.env` files belong in this repository.
+## High-value engineering roadmap
 
-Before any mainnet deployment:
+Repeat deterministic fixtures and token-tax counterfactuals, test external asset conservation, verify fee-on-transfer behavior and require archive-block Polygon fork tests before authorized deployment.
 
-1. Run fork tests.
-2. Verify contracts.
-3. Use a fresh deployment wallet.
-4. Configure timelock, guardian and risk limits.
+## Architecture / implementation provenance
 
-Status: architecture and local testing stage.
+- [`simulation/graph_arbitrage.py`](simulation/graph_arbitrage.py)
+- [`simulation/dual_circuit_solvency.py`](simulation/dual_circuit_solvency.py)
+- [`contracts/LiquidityGrowthCycle.sol`](contracts/LiquidityGrowthCycle.sol)
+- [`docs/GRAPH_ARBITRAGE_QE_RESULTS.md`](docs/GRAPH_ARBITRAGE_QE_RESULTS.md)
 
-The four-contract growth-cycle prototype and its economic limitations are
-documented in [`docs/SELF_SUSTAINING_GRAPH_DESIGN.md`](docs/SELF_SUSTAINING_GRAPH_DESIGN.md).
+## Evidence and product framing
 
-Run the deterministic integer AMM model with:
+This project belongs to the SHTENCO engineering research portfolio. Its distinguishing mechanisms can underpin future applied systems, but the status of each claim is limited to the source and observed evidence. Deployment and financial effectiveness require independent repeatable evidence. No model outcome, status or yield is invented here.
 
-```bash
-python -m unittest tests.test_amm_growth_cycle -v
-```
-
-The connected multi-token arbitrage/QE model and results are documented in
-[`docs/GRAPH_ARBITRAGE_QE_RESULTS.md`](docs/GRAPH_ARBITRAGE_QE_RESULTS.md). It
-models USDT-settled routes, flash fees, AMM fees, and SYNA/SYNR transfer burns.
-
-Run the counterfactual graph with SYNA/SYNR transfer burn disabled using
-`python scripts/run_no_burn_graph_experiment.py`.
-
-The bonded commit/reveal, vesting, fixed burn-sink, and sealed-route MEV model is
-documented in [`docs/ANTI_MEV_DESIGN.md`](docs/ANTI_MEV_DESIGN.md).
-The current deployment blockers and completed hardening work are tracked in
-[`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md).
-
-The voluntary external-solver auction and reserve-safe revenue attribution are
-documented in [`docs/ORDERFLOW_REVENUE.md`](docs/ORDERFLOW_REVENUE.md).
-
-After deployment, Polygon solvers can discover announcements with
-`npm run solver:watch` and submit voluntary bids with `npm run solver:bid`; see
-`solver/auction-manifest.example.json` for the public discovery manifest.
-
-The two-chain bridge/QE solvency model is documented in
-[`docs/DUAL_CIRCUIT_SOLVENCY_REVIEW.md`](docs/DUAL_CIRCUIT_SOLVENCY_REVIEW.md).
-It treats controlled L1 prices as internal marks and accepts only realized
-Polygon assets as LNAV.
-
-Run the explicit unsafe-mechanism experiment (simulation only) with
-`python scripts/run_dual_circuit_experiment.py`.
-
-For the mandatory archival Polygon fork gate, configure `POLYGON_RPC_URL` and
-`FORK_BLOCK_NUMBER=60000000`, install the pinned npm dependencies, and run
-`npm run compile && npm run fork:preflight`. Mainnet deployment is intentionally not automated.
-
-## Read-only Polygon balance check
-
-The repository includes a dependency-free, read-only diagnostic for the current
-SYNA and SYNR contracts. It never accepts or uses a private key:
-
-```bash
-POLYGON_RPC_URL=https://your-provider.example \
-  python scripts/check_polygon_balances.py
-```
-
-If an HTTPS inspection gateway requires its own CA certificate, save the PEM
-outside the repository and pass it explicitly:
-
-```bash
-POLYGON_RPC_URL=https://your-provider.example \
-POLYGON_CA_CERT=/secure/path/gateway-ca.pem \
-  python scripts/check_polygon_balances.py
-```
-
-The certificate only establishes TLS trust. It cannot override a proxy policy
-that rejects the HTTP `CONNECT` request before the TLS handshake.
-
-### `CONNECT` returned HTTP 403
-
-Do **not** disable TLS verification. Options such as `curl -k` take effect only
-after the proxy has accepted `CONNECT`; consequently, they cannot resolve this
-error and would make successful connections vulnerable to interception.
-
-The safe remedies are operational rather than changes to this script:
-
-1. Ask the network administrator to allowlist the exact Polygon RPC hostname
-   and TCP port 443 in the outbound proxy policy.
-2. Use an organization-approved Polygon RPC provider already permitted by the
-   proxy and configure its complete HTTPS URL in `POLYGON_RPC_URL`.
-3. Run the read-only diagnostic from an authorized environment whose egress
-   policy permits that RPC endpoint.
-
-The checker intentionally provides no `--insecure` option. Never place an RPC
-API key in source code, command history, logs, or a pull request.
-
-Do not use any private key posted in chat or committed elsewhere. Treat a shared
-key as compromised, move assets to a freshly generated wallet, and rotate the
-provider credentials before performing deployment or administration.
-
-
-<!-- SYNERGY-FEDERATION-PASSPORT:START -->
----
-
-##  SYNERGY federation passport
-
-**Домен:**  AI financial R&D  
-**Архитектурный родитель:** [`synergy_financial_os`](https://github.com/Shtenco/synergy_financial_os)  
-**Архитектурный корень:** [`synergy_system`](https://github.com/Shtenco/synergy_system)
-
-```mermaid
-flowchart LR
-    SYS[ synergy_system] --> P[synergy_financial_os]
-    P --> THIS[synergy_ai_financial_system]
-    THIS --> E[ Evidence / outputs]
-```
-
-Эта диаграмма фиксирует место в документационной федерации. Реальная code/runtime dependency должна подтверждаться отдельными артефактами.
-
-### Навигация
-
-- [ Атлас всех 75 репозиториев](https://github.com/Shtenco/synergy_system/blob/main/docs/SYNERGY_REPOSITORY_ATLAS.md)
-- [ Машиночитаемый registry](https://github.com/Shtenco/synergy_system/blob/main/registry/SYNERGY_REPOSITORIES.json)
-- [ SYNERGY SYSTEM](https://github.com/Shtenco/synergy_system)
-
-### Evidence rule
-
-`GREEN` присваивается только воспроизводимым утверждениям. Исследовательский код, диаграмма или заявленная метрика без проверяемого artifact trail остаются `R&D/CANDIDATE`.
-
-<!-- SYNERGY-FEDERATION-PASSPORT:END -->
-
----
-
-#  Глубокий технический паспорт AI Financial System
-
-## Реальный состав `main`
-
-Solidity contracts + Python simulations + Hardhat/fork preflight + solver-auction tooling. Это R&D интеграционный полигон для flash/arbitrage/QE/orderflow/MEV/treasury идей.
-
-```mermaid
-flowchart LR
-    SIM[ Simulation] --> POLICY[AI/Graph policy]
-    POLICY --> CONTRACTS[ Solidity contracts]
-    CONTRACTS --> FORK[ Fork preflight]
-    FORK --> EVID[ Evidence / limitations]
-```
-
-## Хорошая граница уже присутствует
-
-`DUAL_CIRCUIT_SOLVENCY_REVIEW.md` принимает только realized Polygon assets как LNAV и трактует controlled L1 prices как internal marks. Это правильный economic firewall.
-
-## Реальные evidence anchors
-
-- `docs/SECURITY_AUDIT.md`;
-- `docs/GRAPH_ARBITRAGE_QE_RESULTS.md`;
-- `docs/ORDERFLOW_REVENUE.md`;
-- `simulation/*.py`;
-- `tests/test_*.py`;
-- `scripts/fork_preflight.js`.
-
-## Следующий рубеж
-
-единая double-entry surface → exact fork receipts → external solver revenue attribution → debt/liability reconciliation → Financial OS import contract.
+**Research reading rule:** do not substitute explanatory diagrams for actual deployments; preserve repository-specific source files and build artifacts for independent verification.

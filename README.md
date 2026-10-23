@@ -124,26 +124,26 @@ provider credentials before performing deployment or administration.
 <!-- SYNERGY-FEDERATION-PASSPORT:START -->
 ---
 
-## 🧭 SYNERGY federation passport
+##  SYNERGY federation passport
 
-**Домен:** 💰 AI financial R&D  
+**Домен:**  AI financial R&D  
 **Архитектурный родитель:** [`synergy_financial_os`](https://github.com/Shtenco/synergy_financial_os)  
 **Архитектурный корень:** [`synergy_system`](https://github.com/Shtenco/synergy_system)
 
 ```mermaid
 flowchart LR
-    SYS[🧭 synergy_system] --> P[synergy_financial_os]
+    SYS[ synergy_system] --> P[synergy_financial_os]
     P --> THIS[synergy_ai_financial_system]
-    THIS --> E[📦 Evidence / outputs]
+    THIS --> E[ Evidence / outputs]
 ```
 
 Эта диаграмма фиксирует место в документационной федерации. Реальная code/runtime dependency должна подтверждаться отдельными артефактами.
 
 ### Навигация
 
-- [📚 Атлас всех 75 репозиториев](https://github.com/Shtenco/synergy_system/blob/main/docs/SYNERGY_REPOSITORY_ATLAS.md)
-- [🧾 Машиночитаемый registry](https://github.com/Shtenco/synergy_system/blob/main/registry/SYNERGY_REPOSITORIES.json)
-- [🧭 SYNERGY SYSTEM](https://github.com/Shtenco/synergy_system)
+- [ Атлас всех 75 репозиториев](https://github.com/Shtenco/synergy_system/blob/main/docs/SYNERGY_REPOSITORY_ATLAS.md)
+- [ Машиночитаемый registry](https://github.com/Shtenco/synergy_system/blob/main/registry/SYNERGY_REPOSITORIES.json)
+- [ SYNERGY SYSTEM](https://github.com/Shtenco/synergy_system)
 
 ### Evidence rule
 
@@ -153,7 +153,7 @@ flowchart LR
 
 ---
 
-# 🏦 Глубокий технический паспорт AI Financial System
+#  Глубокий технический паспорт AI Financial System
 
 ## Реальный состав `main`
 
@@ -161,10 +161,10 @@ Solidity contracts + Python simulations + Hardhat/fork preflight + solver-auctio
 
 ```mermaid
 flowchart LR
-    SIM[🐍 Simulation] --> POLICY[AI/Graph policy]
-    POLICY --> CONTRACTS[⛓️ Solidity contracts]
-    CONTRACTS --> FORK[🧪 Fork preflight]
-    FORK --> EVID[📦 Evidence / limitations]
+    SIM[ Simulation] --> POLICY[AI/Graph policy]
+    POLICY --> CONTRACTS[ Solidity contracts]
+    CONTRACTS --> FORK[ Fork preflight]
+    FORK --> EVID[ Evidence / limitations]
 ```
 
 ## Хорошая граница уже присутствует
